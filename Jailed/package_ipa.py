@@ -83,8 +83,9 @@ def package(source, library, output):
         # Preserve Amazon identity; login uses this bundle ID. Signing is external.
         plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Music Timbre'
-        plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412778')
-        plist['TimbreGUIBuild'] = 8
+        plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
+        plist['TimbreGUIBuild'] = 9
+        plist['NSMotionUsageDescription'] = 'Timbre uses motion from compatible headphones to keep the spatial sound stage stable as you turn your head.'
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.
         for key in ['UISupportedDevices', 'WKCompanionAppBundleIdentifier', 'WKWatchKitApp', 'NSExtension']:

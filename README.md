@@ -82,3 +82,24 @@ A successful manual packaging run publishes the IPA to a GitHub release and then
 updates the feed with the exact version, byte size, release URL and minimum iOS
 version read from that IPA. Workflow run numbers increase the build version
 automatically. Both the legacy app fields and `versions` are maintained.
+
+## Head tracking and shared-storage experiment (Build 9)
+
+The embedded adapter now connects Apple's CMHeadphoneMotionManager to the existing
+Timbre head-yaw renderer. The Effects tab has head tracking, invert direction and
+recenter controls. Both Timbre and immersive spatial must be enabled. Compatible
+motion-capable headphones and Motion & Fitness authorization are required.
+Stale motion older than half a second is discarded. No jailbreak daemon or
+SpringBoard injection is used. Motion permission wording is added by the packager.
+On-device tracking behavior and background delivery require verification.
+
+The two additional groups observed in diagnostics are retried only for generic
+password queries with an explicit service. Their services receive distinct prefixes
+inside this app's permitted private group. This preserves the working primary login
+namespace and does not grant access to Amazon's original shared keychain groups.
+It is an experiment for Home/Profile loading, not a confirmed resolution. Other
+query shapes remain unchanged and visible in Diagnostics.
+
+`build-output/build.json` identifies the exact source commit and outcome of the
+latest Actions build; a successful build also stores the embedded library as base64
+for retrieving and packaging without relying on expiring artifact URLs.

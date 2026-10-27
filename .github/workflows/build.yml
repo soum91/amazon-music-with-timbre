@@ -32,7 +32,7 @@ jobs:
           mkdir -p build
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -c Jailed/fishhook.c -o build/fishhook.o
-          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o -framework UIKit -framework CoreGraphics -framework Foundation -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o -framework UIKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
           codesign --force --sign - build/TimbreNative-FlareStore.dylib
           codesign --verify --strict build/TimbreNative-FlareStore.dylib
           otool -L build/TimbreNative-FlareStore.dylib
@@ -74,5 +74,33 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "Update EmberSign/FlareStore feed for $TIMBRE_BUILD_VERSION"
             git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Record build result and retrievable library
+        if: always()
+        env:
+          BUILD_RESULT: ${{ job.status }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import os,json,base64,pathlib
+          d=pathlib.Path(os.environ['RUNNER_TEMP'])/'timbre-build-result'
+          d.mkdir(exist_ok=True)
+          lib=pathlib.Path('build/TimbreNative-FlareStore.dylib')
+          ok=os.environ['BUILD_RESULT']=='success' and lib.exists()
+          (d/'build.json').write_text(json.dumps({'sourceSHA':os.environ['SOURCE_SHA'],'runID':os.environ['RUN_ID'],'status':os.environ['BUILD_RESULT'],'libraryAvailable':ok,'buildVersion':os.environ['TIMBRE_BUILD_VERSION']}))
+          if ok:
+              (d/'TimbreNative-FlareStore.dylib.b64').write_text(base64.b64encode(lib.read_bytes()).decode())
+          PY
+          git fetch origin main
+          git checkout -B publish-build-result origin/main
+          mkdir -p build-output
+          cp "$RUNNER_TEMP/timbre-build-result/"* build-output/
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add build-output
+          if ! git diff --cached --quiet; then
+            git commit -m "Record embedded library build $TIMBRE_BUILD_VERSION"
             git push origin HEAD:main
           fi

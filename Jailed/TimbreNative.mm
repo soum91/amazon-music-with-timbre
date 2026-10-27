@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <CoreMotion/CoreMotion.h>
 #import <mach-o/dyld.h>
 #import <mach/mach_time.h>
 #import <os/lock.h>
@@ -59,9 +60,18 @@ static void tbDiscoverPrivateGroup() {
 static NSDictionary *tbRetryQuery(CFDictionaryRef query,OSStatus result) {
     if(result!=-34018||!tbPrivateGroup||!query)return nil;
     NSDictionary *q=(__bridge NSDictionary *)query;
-    if(![q[@"agrp"] isEqual:@"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer"])return nil;
-    NSMutableDictionary *mapped=[q mutableCopy];mapped[@"agrp"]=tbPrivateGroup;
-    return mapped;
+    NSString *group=q[@"agrp"];
+    NSMutableDictionary *mapped=[q mutableCopy];
+    if(![group isEqual:@"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer"]) {
+        NSString *space=[group isEqual:@"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer.Shared"]?@"shared":
+            [group isEqual:@"group.amazonmusic.prod.notificationlocale"]?@"notification-locale":nil;
+        id service=q[@"svce"];
+        if(!space || ![q[@"class"] isEqual:@"genp"] || ![service isKindOfClass:NSString.class])return nil;
+        // Each former group stays distinct inside this app's permitted group.
+        // Existing main-login items are untouched; original shared groups stay inaccessible.
+        mapped[@"svce"]=[NSString stringWithFormat:@"Timbre.%@::%@",space,service];
+    }
+    mapped[@"agrp"]=tbPrivateGroup;return mapped;
 }
 static void tbRecordRetry(OSStatus result) {
     os_unfair_lock_lock(&tbKeyLock);tbKeyRetries++;
@@ -84,9 +94,8 @@ static void tbRecord(NSString *operation,CFDictionaryRef query,OSStatus result) 
     tbKeyCalls++;
     if(result==-34018)tbKeyDenied++;
     if(result!=0 && result!=-25300 && result!=-25299 &&
-       !(result==-34018 && tbPrivateGroup &&
-         [name isEqual:@"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer"]))
-        tbKeepFailure([NSString stringWithFormat:@"%@: %d · %@",operation,(int)result,name]);
+       !tbRetryQuery(query,result))
+        tbKeepFailure([NSString stringWithFormat:@"%@: %d · %@ · class %@ · service %@",operation,(int)result,name,q[@"class"]?:@"unspecified",q[@"svce"]?@"present":@"absent"]);
     if(result!=0 && result!=-25300 && result!=-25299)
         tbKeyFailure=[NSString stringWithFormat:@"%@: %d · %@",operation,(int)result,name];
     os_unfair_lock_unlock(&tbKeyLock);
@@ -152,10 +161,14 @@ struct BandSettings {
 struct Settings {
     BandSettings bands[MaxBands];
     std::atomic<int> count{10};
-    std::atomic<bool> on{false}, comp{false}, crossfeed{false}, spatial{false}, reverb{false}, stereo{false};
+    std::atomic<bool> on{false}, comp{false}, crossfeed{false}, spatial{false}, reverb{false}, stereo{false}, headTrack{false}, headInvert{false};
     std::atomic<float> preamp{-6}, width{1};
     std::atomic<uint64_t> generation{1};
 } settings;
+std::atomic<double> headYaw{0};
+std::atomic<uint64_t> headTime{0}, headCenter{0};
+static uint64_t headFreshTicks=0;
+static void updateHeadTracking();
 std::atomic<uint64_t> callbacks{0}, processed{0}, rejected{0}, busy{0}, registrations{0};
 std::atomic<uint64_t> lastProcessed{0};
 std::atomic<int> hookedImages{0}, lastReject{0};
@@ -168,7 +181,7 @@ struct Stream {
     std::atomic_flag rendering=ATOMIC_FLAG_INIT;
     timbre::Coeffs coeff[MaxBands]{};
     double z1[MaxBands][2]{}, z2[MaxBands][2]{};
-    size_t bandCount=0; uint64_t generation=0;
+    size_t bandCount=0; uint64_t generation=0, headCenterGeneration=0;
     double gain=1; bool enabled=false;
     std::unique_ptr<timbre::Effects> effects;
     bool effectsReady=false;
@@ -185,9 +198,9 @@ static void saveSettings() {
         auto &b=settings.bands[i];
         [bands addObject:@{@"hz":@(b.hz.load()),@"gain":@(b.gain.load()),@"q":@(b.q.load()),@"type":@(b.type.load()),@"on":@(b.on.load())}];
     }
-    [[NSUserDefaults standardUserDefaults] setObject:@{@"bands":bands,@"enabled":@(settings.on.load()),@"preamp":@(settings.preamp.load()),@"comp":@(settings.comp.load()),@"crossfeed":@(settings.crossfeed.load()),@"spatial":@(settings.spatial.load()),@"reverb":@(settings.reverb.load()),@"stereo":@(settings.stereo.load()),@"width":@(settings.width.load())} forKey:SettingsKey];
+    [[NSUserDefaults standardUserDefaults] setObject:@{@"bands":bands,@"enabled":@(settings.on.load()),@"preamp":@(settings.preamp.load()),@"comp":@(settings.comp.load()),@"crossfeed":@(settings.crossfeed.load()),@"spatial":@(settings.spatial.load()),@"reverb":@(settings.reverb.load()),@"stereo":@(settings.stereo.load()),@"width":@(settings.width.load()),@"headTrack":@(settings.headTrack.load()),@"headInvert":@(settings.headInvert.load())} forKey:SettingsKey];
 }
-static void changed() { settings.generation.fetch_add(1,std::memory_order_release); saveSettings(); }
+static void changed() { settings.generation.fetch_add(1,std::memory_order_release); saveSettings();dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();}); }
 static float bounded(id x,float fallback,float lo,float hi) {
     if(![x isKindOfClass:NSNumber.class]) return fallback;
     float v=[x floatValue]; return std::isfinite(v)?std::clamp(v,lo,hi):fallback;
@@ -209,6 +222,7 @@ static void loadSettings() {
     settings.on=[d[@"enabled"] boolValue];settings.preamp=bounded(d[@"preamp"],-6,-30,0);
     settings.comp=[d[@"comp"] boolValue];settings.crossfeed=[d[@"crossfeed"] boolValue];
     settings.spatial=[d[@"spatial"] boolValue];settings.reverb=[d[@"reverb"] boolValue];
+    settings.headTrack=[d[@"headTrack"] boolValue];settings.headInvert=[d[@"headInvert"] boolValue];
     settings.stereo=[d[@"stereo"] boolValue];settings.width=bounded(d[@"width"],1,0,2);
 }
 static void configure(Stream &s) noexcept {
@@ -226,7 +240,7 @@ static void configure(Stream &s) noexcept {
     if(s.effectsReady) {
         timbre::EffectsParams p;
         p.comp.on=settings.comp.load();p.crossfeed.on=settings.crossfeed.load();
-        p.spatial.on=settings.spatial.load();p.spatial.mode=1;
+        p.spatial.on=settings.spatial.load();p.spatial.mode=1;p.spatial.headTracking=settings.headTrack.load();p.spatial.headInvert=settings.headInvert.load();
         p.reverb.on=settings.reverb.load();p.reverb.mix=0.18;
         p.width.on=settings.stereo.load();p.width.width=settings.width.load();
         p.limiter.on=true;p.limiter.ceiling=-1;
@@ -243,7 +257,13 @@ static void processChunk(Stream &s,float *data,UInt32 n) noexcept {
         }
         data[i*2+ch]=std::isfinite(x)?(float)x:0;
     }
-    if(s.effectsReady)s.effects->process(data,n);
+    if(s.effectsReady){
+        uint64_t t=headTime.load(std::memory_order_acquire),center=headCenter.load();
+        bool valid=settings.headTrack.load()&&t&&mach_absolute_time()-t<headFreshTicks;
+        if(s.headCenterGeneration!=center){valid=false;s.headCenterGeneration=center;}
+        s.effects->setHeadYaw(headYaw.load(std::memory_order_relaxed),valid);
+        s.effects->process(data,n);
+    }
     else for(UInt32 i=0;i<n*2;i++)data[i]=std::clamp(data[i],-0.89125f,0.89125f);
 }
 static OSStatus render(void *ctx,AudioUnitRenderActionFlags *flags,const AudioTimeStamp *time,UInt32 bus,UInt32 frames,AudioBufferList *buffers) {
@@ -346,6 +366,47 @@ static void addedImage(const mach_header *header,intptr_t slide) {
 } // namespace
 
 
+
+@interface TBHeadTracker : NSObject
+@property(nonatomic,strong) CMHeadphoneMotionManager *manager;
+@property(nonatomic,strong) NSOperationQueue *queue;
+@property(nonatomic,copy) NSString *status;
+@property(nonatomic) BOOL requested;
++ (instancetype)shared;
+- (void)update;
+@end
+@implementation TBHeadTracker
++ (instancetype)shared{static TBHeadTracker *s;static dispatch_once_t once;dispatch_once(&once,^{s=[TBHeadTracker new];s.status=@"Off";s.queue=[NSOperationQueue new];s.queue.maxConcurrentOperationCount=1;});return s;}
+- (void)update{
+    BOOL want=settings.on.load()&&settings.spatial.load()&&settings.headTrack.load();
+    if(!want){[self.manager stopDeviceMotionUpdates];self.requested=NO;headTime=0;self.status=settings.headTrack.load()?@"Enable Timbre and immersive spatial":@"Off";return;}
+    if(![NSBundle.mainBundle objectForInfoDictionaryKey:@"NSMotionUsageDescription"]){self.status=@"Motion permission description missing";return;}
+    if(!self.manager)self.manager=[CMHeadphoneMotionManager new];
+    CMAuthorizationStatus auth=CMHeadphoneMotionManager.authorizationStatus;
+    if(auth==CMAuthorizationStatusDenied||auth==CMAuthorizationStatusRestricted){[self.manager stopDeviceMotionUpdates];self.requested=NO;headTime=0;self.status=@"Motion access denied. Enable it in Settings.";return;}
+    if(!self.manager.deviceMotionAvailable){[self.manager stopDeviceMotionUpdates];self.requested=NO;headTime=0;self.status=@"Connect motion-capable headphones";return;}
+    if(self.requested)return;self.requested=YES;self.status=@"Waiting for headphone motion";
+    __weak TBHeadTracker *weakSelf=self;
+    [self.manager startDeviceMotionUpdatesToQueue:self.queue withHandler:^(CMDeviceMotion *motion,NSError *error){
+        if(motion&&!error&&std::isfinite(motion.attitude.yaw)){
+            headYaw.store(-motion.attitude.yaw*180.0/3.141592653589793,std::memory_order_relaxed);
+            headTime.store(mach_absolute_time(),std::memory_order_release);
+        } else {
+            headTime=0;
+            dispatch_async(dispatch_get_main_queue(),^{TBHeadTracker *s=weakSelf;if(!s)return;[s.manager stopDeviceMotionUpdates];s.requested=NO;s.status=[NSString stringWithFormat:@"Motion unavailable (%ld)",(long)error.code];});
+        }
+    }];
+}
+@end
+namespace {
+static void updateHeadTracking(){[[TBHeadTracker shared] update];}
+static NSString *headStatus(){
+    uint64_t t=headTime.load(std::memory_order_acquire);
+    if(t&&mach_absolute_time()-t<headFreshTicks)return [NSString stringWithFormat:@"Tracking · yaw %.0f°",headYaw.load()];
+    return [TBHeadTracker shared].status;
+}
+}
+
 @interface TBResponseView : UIView
 @end
 @implementation TBResponseView
@@ -412,7 +473,7 @@ static void addedImage(const mach_header *header,intptr_t slide) {
 - (void)pageChanged{UIView *header=[[UIView alloc] initWithFrame:CGRectMake(0,0,self.tableView.bounds.size.width,self.pages.selectedSegmentIndex==0?238:62)];self.pages.frame=CGRectMake(20,12,header.bounds.size.width-40,34);self.pages.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.pages];if(self.pages.selectedSegmentIndex==0){self.response.frame=CGRectMake(20,62,header.bounds.size.width-40,164);self.response.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.response];}self.tableView.tableHeaderView=header;[self.tableView reloadData];}
 - (void)viewWillAppear:(BOOL)animated{[super viewWillAppear:animated];[self.tableView reloadData];[self.response setNeedsDisplay];if(!self.statusTimer)self.statusTimer=[NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];}
 - (void)viewDidLayoutSubviews{[super viewDidLayoutSubviews];UIView *h=self.tableView.tableHeaderView;if(h&&h.bounds.size.width!=self.tableView.bounds.size.width){CGRect f=h.frame;f.size.width=self.tableView.bounds.size.width;h.frame=f;self.tableView.tableHeaderView=h;}}
-- (void)refreshStatus{if(self.pages.selectedSegmentIndex==2&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];[self.response setNeedsDisplay];}
+- (void)refreshStatus{if(self.pages.selectedSegmentIndex==2&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];if(self.pages.selectedSegmentIndex==1){UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:6 inSection:0]];cell.detailTextLabel.text=headStatus();}[self.response setNeedsDisplay];}
 - (void)presets{
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"EQ presets" message:@"Replaces the current bands. Effects stay as configured." preferredStyle:UIAlertControllerStyleActionSheet];NSArray *names=@[@"Flat",@"Bass lift",@"Vocal focus",@"Treble lift"];
     for(int i=0;i<4;i++){int preset=i;[a addAction:[UIAlertAction actionWithTitle:names[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
@@ -421,18 +482,19 @@ static void addedImage(const mach_header *header,intptr_t slide) {
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?4:section==1?2:section==2?settings.count.load()+1:6;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?5:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
     if(section==0)return @"Play a track, enable Timbre, then use the -12 dB test. A rising processed-frame count and an audible volume change establish that this playback route reaches Timbre. Unsupported routes remain unchanged.";
     if(section==1)return @"A -1 dB limiter protects the output while Timbre is enabled. Settings are saved in this app.";
     if(section==2)return @"Tap a band for frequency, gain, Q and filter controls. Swipe to delete. Up to 64 bands.";
-    return @"Spatial uses Timbre's existing stereo-to-binaural renderer. These effects require stereo at 96 kHz or below; EQ still supports higher rates.";
+    return @"Spatial uses Timbre's existing stereo-to-binaural renderer. These effects require stereo at 96 kHz or below; EQ still supports higher rates. Head tracking requires motion-capable headphones and Motion & Fitness permission.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
+        if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==3){cell.textLabel.text=@"Login storage diagnostics";cell.detailTextLabel.text=tbKeyStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==0){cell.textLabel.text=hookedImages.load()?@"Native audio engine detected":@"Waiting for native audio engine";cell.detailTextLabel.text=[NSString stringWithFormat:@"Registrations: %llu · callbacks: %llu",(unsigned long long)registrations.load(),(unsigned long long)callbacks.load()];}
         if(r==1){cell.textLabel.text=[NSString stringWithFormat:@"Processed frames: %llu",(unsigned long long)processed.load()];cell.detailTextLabel.text=[NSString stringWithFormat:@"%.0f Hz · skipped: %llu · format reason: %d",observedRate.load(),(unsigned long long)rejected.load(),lastReject.load()];}
@@ -442,10 +504,12 @@ static void addedImage(const mach_header *header,intptr_t slide) {
     else if(s==2&&r==settings.count.load()){cell.textLabel.text=@"＋ Add band";cell.textLabel.textColor=UIColor.systemIndigoColor;}
     else if(s==2){auto &b=settings.bands[r];cell.textLabel.text=[NSString stringWithFormat:@"%ld · %.0f Hz    %+.1f dB",(long)r+1,b.hz.load(),b.gain.load()];cell.detailTextLabel.text=[NSString stringWithFormat:@"Q %.2f · %@ · %@",b.q.load(),@[@"Peak",@"Low shelf",@"High shelf",@"Low pass",@"High pass",@"Band pass",@"Notch",@"All pass"][std::clamp(b.type.load(),0,7)],b.on.load()?@"On":@"Bypassed"];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;}
     else if(s==3&&r<5){cell.textLabel.text=@[@"Compressor",@"Crossfeed",@"Immersive spatial",@"Reverb",@"Stereo width"][r];UISwitch *sw=[UISwitch new];sw.tag=101+r;std::atomic<bool> *v[]={&settings.comp,&settings.crossfeed,&settings.spatial,&settings.reverb,&settings.stereo};sw.on=v[r]->load();[sw addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];cell.accessoryView=sw;}
+    else if(s==3&&(r==6||r==7)){cell.textLabel.text=r==6?@"Head tracking":@"Invert head direction";UISwitch *sw=[UISwitch new];sw.tag=r==6?106:107;sw.on=r==6?settings.headTrack.load():settings.headInvert.load();[sw addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];cell.accessoryView=sw;if(r==6){cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}}
+    else if(s==3&&r==8){cell.textLabel.text=@"Recenter head tracking";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Face forward, then tap";}
     else {cell.textLabel.text=[NSString stringWithFormat:@"Width: %.0f%%",settings.width.load()*100];UISlider *slider=[[UISlider alloc] initWithFrame:CGRectMake(0,0,150,32)];slider.minimumValue=0;slider.maximumValue=2;slider.value=settings.width.load();slider.tag=201;[slider addTarget:self action:@selector(slide:) forControlEvents:UIControlEventValueChanged];[slider addTarget:self action:@selector(slideEnd:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel];cell.accessoryView=slider;}
     return cell;
 }
-- (void)toggle:(UISwitch *)sw {std::atomic<bool> *v[]={&settings.on,&settings.comp,&settings.crossfeed,&settings.spatial,&settings.reverb,&settings.stereo};int i=(int)sw.tag-100;if(i>=0&&i<6)*v[i]=sw.on;changed();}
+- (void)toggle:(UISwitch *)sw {std::atomic<bool> *v[]={&settings.on,&settings.comp,&settings.crossfeed,&settings.spatial,&settings.reverb,&settings.stereo,&settings.headTrack,&settings.headInvert};int i=(int)sw.tag-100;if(i>=0&&i<8)*v[i]=sw.on;changed();}
 - (void)slide:(UISlider *)slider {if(slider.tag==200)settings.preamp=slider.value;else settings.width=slider.value;settings.generation.fetch_add(1,std::memory_order_release);}
 - (void)slideEnd:(UISlider *)slider {saveSettings();[self.tableView reloadData];}
 - (void)addBand {int n=settings.count.load();if(n>=MaxBands)return;auto &b=settings.bands[n];b.hz=1000;b.gain=0;b.q=1;b.type=0;b.on=true;settings.count=n+1;changed();[self.tableView reloadData];}
@@ -453,6 +517,7 @@ static void addedImage(const mach_header *header,intptr_t slide) {
     [tableView deselectRowAtIndexPath:index animated:YES];
     NSInteger section=[self sourceSection:index.section];
     if(section==0&&index.row==2){settings.preamp=-12;settings.on=true;changed();[tableView reloadData];return;}
+    if(section==3&&index.row==8){headCenter.fetch_add(1);return;}
     if(section!=2)return;if(index.row==settings.count.load()){[self addBand];return;}
     TBBandEditor *editor=[[TBBandEditor alloc] initWithStyle:UITableViewStyleInsetGrouped];editor.bandIndex=index.row;[self.navigationController pushViewController:editor animated:YES];
 }
@@ -504,6 +569,7 @@ static UIWindow *TBNativeWindow(void) {
 
 __attribute__((constructor)) static void launchTimbreNative() {
     @autoreleasepool {
+        mach_timebase_info_data_t timebase;mach_timebase_info(&timebase);headFreshTicks=(uint64_t)(0.5*1e9*timebase.denom/timebase.numer);
         loadSettings();
         tbCopy=(TBKCopy)dlsym(RTLD_DEFAULT,"SecItemCopyMatching");
         tbAdd=(TBKAdd)dlsym(RTLD_DEFAULT,"SecItemAdd");
@@ -513,6 +579,6 @@ __attribute__((constructor)) static void launchTimbreNative() {
         _dyld_register_func_for_add_image(tbObserveKeychain);
         realSet=&AUGraphSetNodeInputCallback;realStart=&AUGraphStart;realDispose=&DisposeAUGraph;
         _dyld_register_func_for_add_image(addedImage);
-        dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];}];});
+        dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();}];});
     }
 }
