@@ -2,7 +2,7 @@
   "name": "Amazon Music with Timbre",
   "identifier": "com.soum91.amazon-music-with-timbre.source",
   "subtitle": "Amazon Music with embedded parametric EQ",
-  "description": "Non-jailbroken iOS builds. Private GitHub source requires authenticated access.",
+  "description": "Non-jailbroken iOS builds. Private GitHub source requires authentication.",
   "website": "https://github.com/soum91/amazon-music-with-timbre",
   "sourceURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/source.json",
   "tintColor": "#6366F1",
@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "Headphone head tracking, invert direction and recenter controls; isolated shared-keychain retries for Home/Profile testing. Unsigned IPA. On-device verification of these changes is pending.",
+      "localizedDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412782",
+          "buildVersion": "26.37.1.412782",
+          "date": "2026-10-27",
+          "localizedDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412782/Amazon-Music-Timbre-Original-UI-10.ipa",
+          "size": 175276991,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412780",
           "buildVersion": "26.37.1.412780",
@@ -27,11 +36,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412780",
+      "version": "26.37.1.412782",
       "versionDate": "2026-10-27",
-      "versionDescription": "Headphone head tracking, invert direction and recenter controls; isolated shared-keychain retries for Home/Profile testing. Unsigned IPA. On-device verification of these changes is pending.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412780/Amazon-Music-Timbre-Head-Tracking-9.ipa",
-      "size": 175206126
+      "versionDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412782/Amazon-Music-Timbre-Original-UI-10.ipa",
+      "size": 175276991
     }
   ],
   "news": [],
