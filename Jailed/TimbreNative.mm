@@ -69,7 +69,11 @@ static NSDictionary *tbRetryQuery(CFDictionaryRef query,OSStatus result) {
         NSString *space=[group isEqual:@"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer.Shared"]?@"shared":
             [group isEqual:@"group.amazonmusic.prod.notificationlocale"]?@"notification-locale":nil;
         id service=q[@"svce"];
-        if(!space || ![q[@"class"] isEqual:@"genp"] || ![service isKindOfClass:NSString.class])return nil;
+        if(!space || ![q[@"class"] isEqual:@"genp"])return nil;
+        // The observed notification-locale item omits service. Keep that empty
+        // service in the same isolated notification namespace on every operation.
+        if(!service && [space isEqual:@"notification-locale"])service=@"";
+        if(![service isKindOfClass:NSString.class])return nil;
         // Each former group stays distinct inside this app's permitted group.
         // Existing main-login items are untouched; original shared groups stay inaccessible.
         mapped[@"svce"]=[NSString stringWithFormat:@"Timbre.%@::%@",space,service];
@@ -646,6 +650,9 @@ extern "C" UIViewController *TBEmbeddedDiagnosticsController(void) {
 @interface TBLauncher : NSObject
 @property(nonatomic,strong) UIButton *button;
 @property(nonatomic,weak) UINavigationController *editorNavigation;
+@property(nonatomic) BOOL dragging, hasPosition;
+@property(nonatomic) CGPoint savedPosition;
+- (void)resetPosition;
 @end
 
 static UIWindow *TBNativeWindow(void) {
@@ -670,13 +677,79 @@ static UIWindow *TBNativeWindow(void) {
 }
 
 @implementation TBLauncher
+- (CGRect)movementBounds:(UIWindow *)window {
+    CGRect safe=UIEdgeInsetsInsetRect(window.bounds,window.safeAreaInsets);
+    // Centers stay inside the safe area with an 8-point inset on every edge.
+    CGFloat dx=49,dy=26;
+    if(safe.size.width<dx*2)dx=safe.size.width/2;
+    if(safe.size.height<dy*2)dy=safe.size.height/2;
+    return CGRectInset(safe,dx,dy);
+}
+- (CGPoint)clampCenter:(CGPoint)p inWindow:(UIWindow *)window {
+    CGRect r=[self movementBounds:window];
+    return CGPointMake(std::clamp(p.x,CGRectGetMinX(r),CGRectGetMaxX(r)),std::clamp(p.y,CGRectGetMinY(r),CGRectGetMaxY(r)));
+}
+- (void)rememberPosition {
+    UIWindow *window=self.button.window;if(!window)return;
+    CGRect r=[self movementBounds:window];CGPoint c=self.button.center;
+    self.savedPosition=CGPointMake(r.size.width>0?(c.x-r.origin.x)/r.size.width:0.5,r.size.height>0?(c.y-r.origin.y)/r.size.height:0.5);
+    self.hasPosition=YES;
+    [[NSUserDefaults standardUserDefaults] setObject:@{@"x":@(self.savedPosition.x),@"y":@(self.savedPosition.y)} forKey:@"TimbreLauncher.position.v1"];
+}
+- (void)resetPosition {
+    self.hasPosition=NO;
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TimbreLauncher.position.v1"];
+    [self attach];
+}
+- (void)drag:(UIPanGestureRecognizer *)pan {
+    UIWindow *window=self.button.window;if(!window)return;
+    if(pan.state==UIGestureRecognizerStateBegan)self.dragging=YES;
+    if(pan.state==UIGestureRecognizerStateBegan||pan.state==UIGestureRecognizerStateChanged){
+        CGPoint delta=[pan translationInView:window];
+        self.button.center=[self clampCenter:CGPointMake(self.button.center.x+delta.x,self.button.center.y+delta.y) inWindow:window];
+        [pan setTranslation:CGPointZero inView:window];
+    }
+    if(pan.state==UIGestureRecognizerStateEnded||pan.state==UIGestureRecognizerStateCancelled||pan.state==UIGestureRecognizerStateFailed){
+        [self rememberPosition];self.dragging=NO;
+    }
+}
 - (void)attach {
     UIWindow *window=TBNativeWindow();
     if(!window||!window.rootViewController)return;
-    if(!self.button){self.button=[UIButton buttonWithType:UIButtonTypeSystem];[self.button setTitle:@"Timbre" forState:UIControlStateNormal];self.button.backgroundColor=UIColor.systemIndigoColor;[self.button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];self.button.layer.cornerRadius=18;self.button.accessibilityLabel=@"Open Timbre equalizer";[self.button addTarget:self action:@selector(open) forControlEvents:UIControlEventTouchUpInside];}
+    if(!self.button){
+        self.button=[UIButton buttonWithType:UIButtonTypeSystem];
+        [self.button setTitle:@"Timbre" forState:UIControlStateNormal];
+        self.button.backgroundColor=UIColor.systemIndigoColor;
+        [self.button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        self.button.layer.cornerRadius=18;
+        self.button.accessibilityLabel=@"Open Timbre equalizer";
+        self.button.accessibilityHint=@"Drag to move. Touch and hold for Reset position.";
+        [self.button addTarget:self action:@selector(open) forControlEvents:UIControlEventTouchUpInside];
+        UIPanGestureRecognizer *pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+        pan.maximumNumberOfTouches=1;pan.cancelsTouchesInView=YES;
+        [self.button addGestureRecognizer:pan];
+        __weak TBLauncher *weakSelf=self;
+        UIAction *reset=[UIAction actionWithTitle:@"Reset position" image:[UIImage systemImageNamed:@"arrow.counterclockwise"] identifier:nil handler:^(UIAction *a){[weakSelf resetPosition];}];
+        self.button.menu=[UIMenu menuWithTitle:@"Drag Timbre to reposition" children:@[reset]];
+        self.button.showsMenuAsPrimaryAction=NO;
+        NSDictionary *saved=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreLauncher.position.v1"];
+        if([saved[@"x"] isKindOfClass:NSNumber.class]&&[saved[@"y"] isKindOfClass:NSNumber.class]){
+            double x=[saved[@"x"] doubleValue],y=[saved[@"y"] doubleValue];
+            if(std::isfinite(x)&&std::isfinite(y)){
+                self.savedPosition=CGPointMake(std::clamp(x,0.,1.),std::clamp(y,0.,1.));self.hasPosition=YES;
+            }
+        }
+    }
     if(self.button.superview!=window)[window addSubview:self.button];
     self.button.hidden=self.editorNavigation.presentingViewController!=nil;
-    self.button.frame=CGRectMake(window.bounds.size.width-92,window.safeAreaInsets.top+8,82,36);[window bringSubviewToFront:self.button];
+    if(!self.dragging){
+        self.button.bounds=CGRectMake(0,0,82,36);
+        CGRect r=[self movementBounds:window];
+        CGPoint c=self.hasPosition?CGPointMake(r.origin.x+self.savedPosition.x*r.size.width,r.origin.y+self.savedPosition.y*r.size.height):
+            CGPointMake(CGRectGetMaxX(r),window.safeAreaInsets.top+100);
+        self.button.center=[self clampCenter:c inWindow:window];
+    }
+    [window bringSubviewToFront:self.button];
 }
 - (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;UIViewController *controller=TBCreateEmbeddedController();UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
 @end

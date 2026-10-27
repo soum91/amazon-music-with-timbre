@@ -3,7 +3,9 @@
 #import <os/lock.h>
 // Metadata only. No URLs beyond host, headers, bodies, cookies, tokens or account data.
 static os_unfair_lock lock=OS_UNFAIR_LOCK_INIT;
-static NSMutableArray<NSString *> *events;
+static NSMutableArray<NSString *> *eventOrder;
+static NSMutableDictionary<NSString *,NSNumber *> *eventCounts;
+static NSMutableDictionary<NSString *,NSNumber *> *successHosts;
 static NSUInteger sessions=0, successes=0;
 static BOOL relevant(NSString *host) {
     NSString *h=host.lowercaseString;
@@ -11,9 +13,12 @@ static BOOL relevant(NSString *host) {
 }
 static void record(NSString *event) {
     os_unfair_lock_lock(&lock);
-    if(!events)events=[NSMutableArray array];
-    if(events.count>=18)[events removeObjectAtIndex:0];
-    [events addObject:event];
+    if(!eventOrder){eventOrder=[NSMutableArray array];eventCounts=[NSMutableDictionary dictionary];}
+    if(!eventCounts[event]){
+        if(eventOrder.count>=32){[eventCounts removeObjectForKey:eventOrder.firstObject];[eventOrder removeObjectAtIndex:0];}
+        [eventOrder addObject:event];
+    }
+    eventCounts[event]=@([eventCounts[event] unsignedIntegerValue]+1);
     os_unfair_lock_unlock(&lock);
 }
 static void completed(NSURLResponse *response,NSError *error) {
@@ -21,7 +26,13 @@ static void completed(NSURLResponse *response,NSError *error) {
     if(!host&&error){id u=error.userInfo[NSURLErrorFailingURLErrorKey];if([u isKindOfClass:NSURL.class])host=[u host];}
     if(!relevant(host))return;
     NSInteger status=[response isKindOfClass:NSHTTPURLResponse.class]?[(NSHTTPURLResponse *)response statusCode]:0;
-    if(!error&&status>=200&&status<400){os_unfair_lock_lock(&lock);successes++;os_unfair_lock_unlock(&lock);return;}
+    if(!error&&status>=200&&status<400){
+        os_unfair_lock_lock(&lock);successes++;
+        if(!successHosts)successHosts=[NSMutableDictionary dictionary];
+        NSString *key=[NSString stringWithFormat:@"%@ · HTTP %ld",host,(long)status];
+        if(successHosts.count<32||successHosts[key])successHosts[key]=@([successHosts[key] unsignedIntegerValue]+1);
+        os_unfair_lock_unlock(&lock);return;
+    }
     record([NSString stringWithFormat:@"%@ · HTTP %ld · %@ %ld",host,(long)status,error.domain?:@"OK",(long)error.code]);
 }
 @interface NSURLSession (TBPageDiagnostics)
@@ -73,6 +84,14 @@ void TBInstallPageDiagnostics(void) {
 }
 NSString *TBPageDiagnosticsText(void) {
     os_unfair_lock_lock(&lock);
-    NSString *text=[NSString stringWithFormat:@"Observed delegate sessions: %lu · successful responses: %lu\n%@\nCoverage: URLSession completion handlers and implemented delegate completion callbacks. Other network stacks may not appear.",(unsigned long)sessions,(unsigned long)successes,events.count?[events componentsJoinedByString:@"\n"]:@"No matching completed request or app-group failure observed yet."];
+    NSMutableArray *lines=[NSMutableArray array];
+    [lines addObject:[NSString stringWithFormat:@"Observed delegate sessions: %lu · successful responses: %lu",(unsigned long)sessions,(unsigned long)successes]];
+    [lines addObject:@"Distinct failures (repeats grouped):"];
+    if(!eventOrder.count)[lines addObject:@"None observed."];
+    for(NSString *event in eventOrder)[lines addObject:[NSString stringWithFormat:@"%@ · count %@",event,eventCounts[event]]];
+    [lines addObject:@"Successful hosts:"];
+    for(NSString *host in [[successHosts allKeys] sortedArrayUsingSelector:@selector(compare:)])[lines addObject:[NSString stringWithFormat:@"%@ · count %@",host,successHosts[host]]];
+    [lines addObject:@"Coverage: URLSession completion handlers and implemented delegate completion callbacks. Other network stacks may not appear. HTTP success does not prove the response payload succeeded."];
+    NSString *text=[lines componentsJoinedByString:@"\n"];
     os_unfair_lock_unlock(&lock);return text;
 }

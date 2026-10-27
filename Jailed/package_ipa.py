@@ -84,7 +84,7 @@ def package(source, library, output):
         plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Music Timbre'
         plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
-        plist['TimbreGUIBuild'] = 10
+        plist['TimbreGUIBuild'] = 11
         plist['NSMotionUsageDescription'] = 'Timbre uses motion from compatible headphones to keep the spatial sound stage stable as you turn your head.'
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.
