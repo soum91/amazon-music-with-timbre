@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
+      "localizedDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412784",
+          "buildVersion": "26.37.1.412784",
+          "date": "2026-10-27",
+          "localizedDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412784/Amazon-Music-Timbre-Bottom-Right-12.ipa",
+          "size": 175281922,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412783",
           "buildVersion": "26.37.1.412783",
@@ -45,11 +54,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412783",
+      "version": "26.37.1.412784",
       "versionDate": "2026-10-27",
-      "versionDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412783/Amazon-Music-Timbre-Moveable-11.ipa",
-      "size": 175281085
+      "versionDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412784/Amazon-Music-Timbre-Bottom-Right-12.ipa",
+      "size": 175281922
     }
   ],
   "news": [],
