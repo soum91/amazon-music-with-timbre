@@ -1,4 +1,11 @@
 #import <UIKit/UIKit.h>
+#ifndef TIMBRE_BUILD_VERSION
+#define TIMBRE_BUILD_VERSION "development"
+#endif
+#ifndef TIMBRE_SOURCE_SHA
+#define TIMBRE_SOURCE_SHA "unknown"
+#endif
+
 #import "TimbreEmbeddedUI.h"
 extern "C" void TBInstallPageDiagnostics(void);
 extern "C" NSString *TBPageDiagnosticsText(void);
@@ -10,6 +17,7 @@ extern "C" NSString *TBPageDiagnosticsText(void);
 #import <os/lock.h>
 #include <dlfcn.h>
 #include <atomic>
+static std::atomic<uint64_t> tbDragBegan{0},tbDragEnded{0};
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -488,7 +496,7 @@ static NSString *headStatus(){
 @end
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre";
+    [super viewDidLoad];self.title=@"Timbre 12";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -502,7 +510,7 @@ static NSString *headStatus(){
 - (void)pageChanged{UIView *header=[[UIView alloc] initWithFrame:CGRectMake(0,0,self.tableView.bounds.size.width,self.pages.selectedSegmentIndex==0?238:62)];self.pages.frame=CGRectMake(20,12,header.bounds.size.width-40,34);self.pages.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.pages];if(self.pages.selectedSegmentIndex==0){self.response.frame=CGRectMake(20,62,header.bounds.size.width-40,164);self.response.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.response];}self.tableView.tableHeaderView=header;[self.tableView reloadData];}
 - (void)viewWillAppear:(BOOL)animated{[super viewWillAppear:animated];[self.tableView reloadData];[self.response setNeedsDisplay];if(!self.statusTimer)self.statusTimer=[NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];}
 - (void)viewDidLayoutSubviews{[super viewDidLayoutSubviews];UIView *h=self.tableView.tableHeaderView;if(h&&h.bounds.size.width!=self.tableView.bounds.size.width){CGRect f=h.frame;f.size.width=self.tableView.bounds.size.width;h.frame=f;self.tableView.tableHeaderView=h;}}
-- (void)refreshStatus{if(self.pages.selectedSegmentIndex==1&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];if(self.pages.selectedSegmentIndex==1){UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:6 inSection:0]];cell.detailTextLabel.text=headStatus();}[self.response setNeedsDisplay];}
+- (void)refreshStatus{if(self.pages.selectedSegmentIndex==1&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];[self.response setNeedsDisplay];}
 - (void)presets{
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"EQ presets" message:@"Replaces the current bands. Effects stay as configured." preferredStyle:UIAlertControllerStyleActionSheet];NSArray *names=@[@"Flat",@"Bass lift",@"Vocal focus",@"Treble lift"];
     for(int i=0;i<4;i++){int preset=i;[a addAction:[UIAlertAction actionWithTitle:names[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
@@ -511,7 +519,7 @@ static NSString *headStatus(){
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?6:section==1?2:section==2?settings.count.load()+1:9;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?7:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
@@ -523,6 +531,8 @@ static NSString *headStatus(){
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild12";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==3){cell.textLabel.text=@"Login storage diagnostics";cell.detailTextLabel.text=tbKeyStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -694,23 +704,33 @@ static UIWindow *TBNativeWindow(void) {
     CGRect r=[self movementBounds:window];CGPoint c=self.button.center;
     self.savedPosition=CGPointMake(r.size.width>0?(c.x-r.origin.x)/r.size.width:0.5,r.size.height>0?(c.y-r.origin.y)/r.size.height:0.5);
     self.hasPosition=YES;
-    [[NSUserDefaults standardUserDefaults] setObject:@{@"x":@(self.savedPosition.x),@"y":@(self.savedPosition.y)} forKey:@"TimbreLauncher.position.v1"];
+    [[NSUserDefaults standardUserDefaults] setObject:@{@"x":@(self.savedPosition.x),@"y":@(self.savedPosition.y)} forKey:@"TimbreLauncher.position.v2"];
 }
 - (void)resetPosition {
     self.hasPosition=NO;
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TimbreLauncher.position.v1"];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TimbreLauncher.position.v2"];
     [self attach];
+}
+- (void)positionMenu:(UILongPressGestureRecognizer *)hold {
+    if(hold.state!=UIGestureRecognizerStateBegan||self.dragging)return;
+    UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Timbre button" message:@"Drag the button to move it. Your position is remembered." preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak TBLauncher *weakSelf=self;
+    [a addAction:[UIAlertAction actionWithTitle:@"Reset to bottom right" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[weakSelf resetPosition];}]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView=self.button;a.popoverPresentationController.sourceRect=self.button.bounds;
+    [vc presentViewController:a animated:YES completion:nil];
 }
 - (void)drag:(UIPanGestureRecognizer *)pan {
     UIWindow *window=self.button.window;if(!window)return;
-    if(pan.state==UIGestureRecognizerStateBegan)self.dragging=YES;
+    if(pan.state==UIGestureRecognizerStateBegan){self.dragging=YES;tbDragBegan.fetch_add(1);}
     if(pan.state==UIGestureRecognizerStateBegan||pan.state==UIGestureRecognizerStateChanged){
         CGPoint delta=[pan translationInView:window];
         self.button.center=[self clampCenter:CGPointMake(self.button.center.x+delta.x,self.button.center.y+delta.y) inWindow:window];
         [pan setTranslation:CGPointZero inView:window];
     }
     if(pan.state==UIGestureRecognizerStateEnded||pan.state==UIGestureRecognizerStateCancelled||pan.state==UIGestureRecognizerStateFailed){
-        [self rememberPosition];self.dragging=NO;
+        [self rememberPosition];self.dragging=NO;tbDragEnded.fetch_add(1);
     }
 }
 - (void)attach {
@@ -728,11 +748,11 @@ static UIWindow *TBNativeWindow(void) {
         UIPanGestureRecognizer *pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
         pan.maximumNumberOfTouches=1;pan.cancelsTouchesInView=YES;
         [self.button addGestureRecognizer:pan];
-        __weak TBLauncher *weakSelf=self;
-        UIAction *reset=[UIAction actionWithTitle:@"Reset position" image:[UIImage systemImageNamed:@"arrow.counterclockwise"] identifier:nil handler:^(UIAction *a){[weakSelf resetPosition];}];
-        self.button.menu=[UIMenu menuWithTitle:@"Drag Timbre to reposition" children:@[reset]];
-        self.button.showsMenuAsPrimaryAction=NO;
-        NSDictionary *saved=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreLauncher.position.v1"];
+        // Use our own long press, rather than UIButton's context-menu recognizers.
+        UILongPressGestureRecognizer *hold=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(positionMenu:)];
+        hold.minimumPressDuration=0.6;hold.allowableMovement=8;
+        [self.button addGestureRecognizer:hold];
+        NSDictionary *saved=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreLauncher.position.v2"];
         if([saved[@"x"] isKindOfClass:NSNumber.class]&&[saved[@"y"] isKindOfClass:NSNumber.class]){
             double x=[saved[@"x"] doubleValue],y=[saved[@"y"] doubleValue];
             if(std::isfinite(x)&&std::isfinite(y)){
@@ -746,7 +766,7 @@ static UIWindow *TBNativeWindow(void) {
         self.button.bounds=CGRectMake(0,0,82,36);
         CGRect r=[self movementBounds:window];
         CGPoint c=self.hasPosition?CGPointMake(r.origin.x+self.savedPosition.x*r.size.width,r.origin.y+self.savedPosition.y*r.size.height):
-            CGPointMake(CGRectGetMaxX(r),window.safeAreaInsets.top+100);
+            CGPointMake(CGRectGetMaxX(r),CGRectGetMaxY(window.bounds)-window.safeAreaInsets.bottom-150);
         self.button.center=[self clampCenter:c inWindow:window];
     }
     [window bringSubviewToFront:self.button];
@@ -772,4 +792,5 @@ __attribute__((constructor)) static void launchTimbreNative() {
         dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();}];});
     }
 }
+
 
