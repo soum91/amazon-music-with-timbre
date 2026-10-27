@@ -1,0 +1,11 @@
+{
+  "name": "Amazon Music with Timbre",
+  "identifier": "com.soum91.amazon-music-with-timbre.source",
+  "subtitle": "Amazon Music with embedded parametric EQ",
+  "description": "Non-jailbroken iOS builds. Apps appear after an IPA release is published. This private source requires authenticated GitHub access.",
+  "website": "https://github.com/soum91/amazon-music-with-timbre",
+  "sourceURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/source.json",
+  "tintColor": "#6366F1",
+  "apps": [],
+  "news": []
+}
