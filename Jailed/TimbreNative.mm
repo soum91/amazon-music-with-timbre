@@ -211,7 +211,10 @@ static void saveSettings() {
         for(NSDictionary *b in bands)[converted addObject:@{@"frequency":b[@"hz"],@"gain":b[@"gain"],@"q":b[@"q"],@"type":b[@"type"],@"enabled":b[@"on"]}];
         d[@"bands"]=converted;d[@"enabled"]=@(settings.on.load());d[@"preamp"]=@(settings.preamp.load());
         [[NSUserDefaults standardUserDefaults] setObject:d forKey:@"TimbreEmbedded.full.v1"];
+        d[@"autoPreamp"]=@NO;
         TBEmbeddedApplyConfig(d);
+        [[NSUserDefaults standardUserDefaults] setObject:d forKey:@"TimbreEmbedded.full.v1"];
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"TimbreEmbeddedLegacyEdited" object:nil];
     }
 
 }
@@ -485,17 +488,17 @@ static NSString *headStatus(){
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
-    self.pages=[[UISegmentedControl alloc] initWithItems:@[@"Equalizer",@"Effects",@"Diagnostics"]];self.pages.selectedSegmentIndex=0;[self.pages addTarget:self action:@selector(pageChanged) forControlEvents:UIControlEventValueChanged];
+    self.pages=[[UISegmentedControl alloc] initWithItems:@[@"Band list",@"Diagnostics"]];self.pages.selectedSegmentIndex=0;[self.pages addTarget:self action:@selector(pageChanged) forControlEvents:UIControlEventValueChanged];
     self.response=[TBResponseView new];self.response.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor;self.response.layer.cornerRadius=18;[self pageChanged];
     self.statusTimer=[NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];
 }
 - (void)close {[self.statusTimer invalidate];self.statusTimer=nil;[self dismissViewControllerAnimated:YES completion:nil];}
 - (void)viewDidDisappear:(BOOL)animated {[super viewDidDisappear:animated];[self.statusTimer invalidate];self.statusTimer=nil;}
-- (NSInteger)sourceSection:(NSInteger)section{return self.pages.selectedSegmentIndex==0?section+1:self.pages.selectedSegmentIndex==1?3:0;}
+- (NSInteger)sourceSection:(NSInteger)section{return self.pages.selectedSegmentIndex==0?section+1:0;}
 - (void)pageChanged{UIView *header=[[UIView alloc] initWithFrame:CGRectMake(0,0,self.tableView.bounds.size.width,self.pages.selectedSegmentIndex==0?238:62)];self.pages.frame=CGRectMake(20,12,header.bounds.size.width-40,34);self.pages.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.pages];if(self.pages.selectedSegmentIndex==0){self.response.frame=CGRectMake(20,62,header.bounds.size.width-40,164);self.response.autoresizingMask=UIViewAutoresizingFlexibleWidth;[header addSubview:self.response];}self.tableView.tableHeaderView=header;[self.tableView reloadData];}
 - (void)viewWillAppear:(BOOL)animated{[super viewWillAppear:animated];[self.tableView reloadData];[self.response setNeedsDisplay];if(!self.statusTimer)self.statusTimer=[NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];}
 - (void)viewDidLayoutSubviews{[super viewDidLayoutSubviews];UIView *h=self.tableView.tableHeaderView;if(h&&h.bounds.size.width!=self.tableView.bounds.size.width){CGRect f=h.frame;f.size.width=self.tableView.bounds.size.width;h.frame=f;self.tableView.tableHeaderView=h;}}
-- (void)refreshStatus{if(self.pages.selectedSegmentIndex==2&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];if(self.pages.selectedSegmentIndex==1){UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:6 inSection:0]];cell.detailTextLabel.text=headStatus();}[self.response setNeedsDisplay];}
+- (void)refreshStatus{if(self.pages.selectedSegmentIndex==1&&!self.tableView.tracking&&!self.tableView.dragging)[self.tableView reloadData];if(self.pages.selectedSegmentIndex==1){UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:6 inSection:0]];cell.detailTextLabel.text=headStatus();}[self.response setNeedsDisplay];}
 - (void)presets{
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"EQ presets" message:@"Replaces the current bands. Effects stay as configured." preferredStyle:UIAlertControllerStyleActionSheet];NSArray *names=@[@"Flat",@"Bass lift",@"Vocal focus",@"Treble lift"];
     for(int i=0;i<4;i++){int preset=i;[a addAction:[UIAlertAction actionWithTitle:names[i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){

@@ -4,7 +4,7 @@
 // Metadata only. No URLs beyond host, headers, bodies, cookies, tokens or account data.
 static os_unfair_lock lock=OS_UNFAIR_LOCK_INIT;
 static NSMutableArray<NSString *> *events;
-static NSUInteger sessions=0;
+static NSUInteger sessions=0, successes=0;
 static BOOL relevant(NSString *host) {
     NSString *h=host.lowercaseString;
     return [h containsString:@"amazon."]||[h hasSuffix:@"amazon.com"]||[h hasSuffix:@"amazonaws.com"]||[h hasSuffix:@"a2z.com"];
@@ -18,9 +18,10 @@ static void record(NSString *event) {
 }
 static void completed(NSURLResponse *response,NSError *error) {
     NSString *host=response.URL.host;
-    if(!host&&error)host=[error.userInfo[NSURLErrorFailingURLErrorKey] host];
+    if(!host&&error){id u=error.userInfo[NSURLErrorFailingURLErrorKey];if([u isKindOfClass:NSURL.class])host=[u host];}
     if(!relevant(host))return;
     NSInteger status=[response isKindOfClass:NSHTTPURLResponse.class]?[(NSHTTPURLResponse *)response statusCode]:0;
+    if(!error&&status>=200&&status<400){os_unfair_lock_lock(&lock);successes++;os_unfair_lock_unlock(&lock);return;}
     record([NSString stringWithFormat:@"%@ · HTTP %ld · %@ %ld",host,(long)status,error.domain?:@"OK",(long)error.code]);
 }
 @interface NSURLSession (TBPageDiagnostics)
@@ -72,6 +73,6 @@ void TBInstallPageDiagnostics(void) {
 }
 NSString *TBPageDiagnosticsText(void) {
     os_unfair_lock_lock(&lock);
-    NSString *text=[NSString stringWithFormat:@"Observed delegate sessions: %lu\n%@\nCoverage: URLSession completion handlers and implemented delegate completion callbacks. Other network stacks may not appear.",(unsigned long)sessions,events.count?[events componentsJoinedByString:@"\n"]:@"No matching completed request or app-group failure observed yet."];
+    NSString *text=[NSString stringWithFormat:@"Observed delegate sessions: %lu · successful responses: %lu\n%@\nCoverage: URLSession completion handlers and implemented delegate completion callbacks. Other network stacks may not appear.",(unsigned long)sessions,(unsigned long)successes,events.count?[events componentsJoinedByString:@"\n"]:@"No matching completed request or app-group failure observed yet."];
     os_unfair_lock_unlock(&lock);return text;
 }

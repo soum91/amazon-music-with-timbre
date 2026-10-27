@@ -103,6 +103,7 @@ static double roundSignificant(double v, int digits) {
 - (void)setValue:(id)value at:(NSString *)keyPath;
 - (void)changed;
 - (void)commit;
+- (void)load;
 @end
 
 
@@ -1626,6 +1627,7 @@ UIViewController *TBCreateEmbeddedController(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         recordCurrentRoute();
+        [[NSNotificationCenter defaultCenter] addObserverForName:@"TimbreEmbeddedLegacyEdited" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { [[TBAmazonStore shared] load]; [[NSNotificationCenter defaultCenter] postNotificationName:kChanged object:nil]; }];
         [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { recordCurrentRoute(); TBEmbeddedApplyConfig([TBAmazonStore shared].config); }];
     });
     [[TBAmazonStore shared] commit];
