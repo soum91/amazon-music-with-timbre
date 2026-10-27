@@ -1,0 +1,7 @@
+build/
+input/
+*.ipa
+*.p12
+*.mobileprovision
+__pycache__/
+.DS_Store
