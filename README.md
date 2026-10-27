@@ -63,3 +63,22 @@ Use increasing processed-frame counts plus the audible -12 dB test to verify a r
 - `.github/workflows/build.yml`: standalone build and optional packaging
 
 Source provenance and third-party notices remain in the imported files. No blanket relicensing of Amazon software is implied.
+
+## EmberSign / FlareStore source
+
+Feed path: `source.json`
+
+```text
+https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/source.json
+```
+
+The repository is private. Anonymous raw/release requests will fail; importing this
+feed and downloading its IPA require a sideloader capable of authenticated GitHub
+access. Do not embed a personal token in the feed URL. A public feed/asset host is
+needed for sideloaders that cannot authenticate.
+
+The feed intentionally lists no app until a packaged IPA has been published.
+A successful manual packaging run publishes the IPA to a GitHub release and then
+updates the feed with the exact version, byte size, release URL and minimum iOS
+version read from that IPA. Workflow run numbers increase the build version
+automatically. Both the legacy app fields and `versions` are maintained.

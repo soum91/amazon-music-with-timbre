@@ -2,7 +2,7 @@ name: Build Amazon Music with Timbre
 on:
   push:
     branches: [main]
-    paths: ['Jailed/**', 'NativeDSP/**', '.github/workflows/build.yml']
+    paths: ['Jailed/**', 'NativeDSP/**', 'scripts/**', '.github/workflows/build.yml']
   workflow_dispatch:
     inputs:
       package_ipa:
@@ -10,7 +10,10 @@ on:
         type: boolean
         default: false
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: amazon-music-timbre-main
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: macos-15
@@ -18,6 +21,8 @@ jobs:
       TIMBRE_BUILD_VERSION: 26.37.1.412778
     steps:
       - uses: actions/checkout@v4
+      - name: Assign increasing build version
+        run: echo "TIMBRE_BUILD_VERSION=26.37.1.$((412777 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - name: Test DSP
         run: |
           clang++ -std=c++17 -O2 NativeDSP/TimbreDSP.cpp NativeDSP/tests/test.cpp -framework Accelerate -o /tmp/timbre-tests
@@ -54,3 +59,20 @@ jobs:
           name: Amazon-Music-Timbre-unsigned
           path: build/Amazon-Music-Timbre.ipa
           if-no-files-found: error
+      - name: Publish IPA release and update sideloader feed
+        if: ${{ inputs.package_ipa == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-$TIMBRE_BUILD_VERSION"
+          gh release create "$TAG" build/Amazon-Music-Timbre.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Music with Timbre $TIMBRE_BUILD_VERSION" --notes "Unsigned non-jailbroken IPA with embedded Timbre. Sign before installation." --latest
+          ASSET_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Amazon-Music-Timbre.ipa"
+          python3 scripts/update_source.py build/Amazon-Music-Timbre.ipa "$ASSET_URL" source.json --repository "$GITHUB_REPOSITORY"
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add source.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update EmberSign/FlareStore feed for $TIMBRE_BUILD_VERSION"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
