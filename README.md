@@ -103,3 +103,12 @@ query shapes remain unchanged and visible in Diagnostics.
 `build-output/build.json` identifies the exact source commit and outcome of the
 latest Actions build; a successful build also stores the embedded library as base64
 for retrieving and packaging without relying on expiring artifact URLs.
+
+
+## Original Timbre interface port (GUI 10)
+
+`Jailed/TimbreEmbeddedUI.m` adapts `soum91/timbre`, branch `timbre-rootless`, commit `4f856379b9eaf2c55e6d44c0e7dac3eb816ca2e0`, `Tweak/TimbreControl/main.m`. It preserves the original graph gestures, fader controls, five pages, detailed effects, saved/imported presets and route rules. The controller is embedded in Amazon Music with a dedicated Done button. The purple launcher stays hidden while the editor is open. The earlier band list remains available through the menu.
+
+The storage adapter uses app-local preferences. Every effects parameter is connected to the existing native DSP; the jailbreak helper, daemon diagnostics and system Chromecast daemon are excluded. AirPlay uses the standard system route picker. Head tracking uses this app's CoreMotion manager. No jailbreak project files are changed.
+
+Home/Profile are still unresolved. The diagnostic view records request host, HTTP status and NSError domain/code for covered URLSession requests, plus failed Amazon app-group container lookups. It never records full URL paths, query strings, headers, bodies or credential values. Missing observations do not prove requests succeeded. GUI and Home/Profile behavior require on-device verification.

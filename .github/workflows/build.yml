@@ -32,7 +32,9 @@ jobs:
           mkdir -p build
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -c Jailed/fishhook.c -o build/fishhook.o
-          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o -framework UIKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbreEmbeddedUI.m -o build/embedded-ui.o
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbrePageDiagnostics.m -o build/page-diagnostics.o
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o -framework UIKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
           codesign --force --sign - build/TimbreNative-FlareStore.dylib
           codesign --verify --strict build/TimbreNative-FlareStore.dylib
           otool -L build/TimbreNative-FlareStore.dylib
@@ -104,3 +106,4 @@ jobs:
             git commit -m "Record embedded library build $TIMBRE_BUILD_VERSION"
             git push origin HEAD:main
           fi
+

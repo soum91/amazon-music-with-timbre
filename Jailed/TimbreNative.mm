@@ -1,4 +1,7 @@
 #import <UIKit/UIKit.h>
+#import "TimbreEmbeddedUI.h"
+extern "C" void TBInstallPageDiagnostics(void);
+extern "C" NSString *TBPageDiagnosticsText(void);
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMotion/CoreMotion.h>
@@ -163,6 +166,7 @@ struct Settings {
     std::atomic<int> count{10};
     std::atomic<bool> on{false}, comp{false}, crossfeed{false}, spatial{false}, reverb{false}, stereo{false}, headTrack{false}, headInvert{false};
     std::atomic<float> preamp{-6}, width{1};
+    std::atomic<bool> speakerProtect{false};
     std::atomic<uint64_t> generation{1};
 } settings;
 std::atomic<double> headYaw{0};
@@ -179,8 +183,8 @@ struct Stream {
     AudioStreamBasicDescription format{};
     std::atomic<bool> ready{false};
     std::atomic_flag rendering=ATOMIC_FLAG_INIT;
-    timbre::Coeffs coeff[MaxBands]{};
-    double z1[MaxBands][2]{}, z2[MaxBands][2]{};
+    timbre::Coeffs coeff[MaxBands+2]{};
+    double z1[MaxBands+2][2]{}, z2[MaxBands+2][2]{};
     size_t bandCount=0; uint64_t generation=0, headCenterGeneration=0;
     double gain=1; bool enabled=false;
     std::unique_ptr<timbre::Effects> effects;
@@ -190,6 +194,9 @@ Stream streams[MaxStreams];
 std::atomic<int> used{0};
 static os_unfair_lock registryLock=OS_UNFAIR_LOCK_INIT;
 static NSString *const SettingsKey=@"TimbreNative.v1";
+static os_unfair_lock fxLock=OS_UNFAIR_LOCK_INIT;
+static timbre::EffectsParams embeddedFX;
+static std::atomic<bool> fullConfigActive{false};
 static const float Defaults[]={31,62,125,250,500,1000,2000,4000,8000,16000};
 
 static void saveSettings() {
@@ -199,6 +206,14 @@ static void saveSettings() {
         [bands addObject:@{@"hz":@(b.hz.load()),@"gain":@(b.gain.load()),@"q":@(b.q.load()),@"type":@(b.type.load()),@"on":@(b.on.load())}];
     }
     [[NSUserDefaults standardUserDefaults] setObject:@{@"bands":bands,@"enabled":@(settings.on.load()),@"preamp":@(settings.preamp.load()),@"comp":@(settings.comp.load()),@"crossfeed":@(settings.crossfeed.load()),@"spatial":@(settings.spatial.load()),@"reverb":@(settings.reverb.load()),@"stereo":@(settings.stereo.load()),@"width":@(settings.width.load()),@"headTrack":@(settings.headTrack.load()),@"headInvert":@(settings.headInvert.load())} forKey:SettingsKey];
+    NSDictionary *full=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreEmbedded.full.v1"];
+    if(full){NSMutableDictionary *d=[full mutableCopy];NSMutableArray *converted=[NSMutableArray array];
+        for(NSDictionary *b in bands)[converted addObject:@{@"frequency":b[@"hz"],@"gain":b[@"gain"],@"q":b[@"q"],@"type":b[@"type"],@"enabled":b[@"on"]}];
+        d[@"bands"]=converted;d[@"enabled"]=@(settings.on.load());d[@"preamp"]=@(settings.preamp.load());
+        [[NSUserDefaults standardUserDefaults] setObject:d forKey:@"TimbreEmbedded.full.v1"];
+        TBEmbeddedApplyConfig(d);
+    }
+
 }
 static void changed() { settings.generation.fetch_add(1,std::memory_order_release); saveSettings();dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();}); }
 static float bounded(id x,float fallback,float lo,float hi) {
@@ -237,6 +252,9 @@ static void configure(Stream &s) noexcept {
         try { s.coeff[s.bandCount++]=timbre::coefficients({true,(timbre::FilterType)b.type.load(),b.hz.load(),b.gain.load(),b.q.load()},s.format.mSampleRate); }
         catch(...) { s.bandCount=0;break; }
     }
+    if(settings.speakerProtect.load()) {
+        for(int i=0;i<2;i++) s.coeff[s.bandCount++]=timbre::coefficients({true,timbre::FilterType::HighPass,150,0,0.707},s.format.mSampleRate);
+    }
     if(s.effectsReady) {
         timbre::EffectsParams p;
         p.comp.on=settings.comp.load();p.crossfeed.on=settings.crossfeed.load();
@@ -244,6 +262,10 @@ static void configure(Stream &s) noexcept {
         p.reverb.on=settings.reverb.load();p.reverb.mix=0.18;
         p.width.on=settings.stereo.load();p.width.width=settings.width.load();
         p.limiter.on=true;p.limiter.ceiling=-1;
+        if(fullConfigActive) {
+            if(!os_unfair_lock_trylock(&fxLock)) return;
+            p=embeddedFX;os_unfair_lock_unlock(&fxLock);
+        }
         s.effects->configure(p);
     }
     s.generation=generation;
@@ -482,7 +504,7 @@ static NSString *headStatus(){
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?5:section==1?2:section==2?settings.count.load()+1:9;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?6:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
@@ -494,6 +516,7 @@ static NSString *headStatus(){
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
+        if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==3){cell.textLabel.text=@"Login storage diagnostics";cell.detailTextLabel.text=tbKeyStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==0){cell.textLabel.text=hookedImages.load()?@"Native audio engine detected":@"Waiting for native audio engine";cell.detailTextLabel.text=[NSString stringWithFormat:@"Registrations: %llu · callbacks: %llu",(unsigned long long)registrations.load(),(unsigned long long)callbacks.load()];}
@@ -528,6 +551,94 @@ static NSString *headStatus(){
     for(int i=(int)index.row;i<n-1;i++){auto &a=settings.bands[i],&b=settings.bands[i+1];a.hz=b.hz.load();a.gain=b.gain.load();a.q=b.q.load();a.type=b.type.load();a.on=b.on.load();}settings.count=n-1;changed();[tableView reloadData];
 }
 @end
+
+
+static NSDictionary *section(NSDictionary *d,NSString *key) {id v=d[key];return [v isKindOfClass:NSDictionary.class]?v:@{};}
+static double number(NSDictionary *d,NSString *key,double fallback,double lo,double hi) {return bounded(d[key],fallback,lo,hi);}
+static bool flag(NSDictionary *d,NSString *key,bool fallback) {id v=d[key];return [v isKindOfClass:NSNumber.class]?[v boolValue]:fallback;}
+static timbre::EffectsParams parseEffects(NSDictionary *d) {
+    timbre::EffectsParams p;
+    p.outputDB = number(d, @"output", 0, -24, 12);
+    NSDictionary *c = section(d, @"comp");
+    p.comp = {flag(c, @"on", false), number(c, @"threshold", -24, -60, 0), number(c, @"knee", 6, 0, 40),
+              number(c, @"ratio", 3, 1, 20), number(c, @"attack", 10, 0.1, 200), number(c, @"release", 150, 10, 1000),
+              number(c, @"makeup", 0, -12, 24)};
+    NSDictionary *x = section(d, @"crossfeed");
+    p.crossfeed = {flag(x, @"on", false), number(x, @"level", -6, -20, -1), number(x, @"cutoff", 700, 300, 1500),
+                   number(x, @"delay", 0.3, 0, 0.8)};
+    NSDictionary *w = section(d, @"width");
+    p.width = {flag(w, @"on", false), number(w, @"width", 1, 0, 2.5), number(w, @"balance", 0, -1, 1),
+               flag(w, @"mono", false), flag(w, @"swap", false)};
+    NSDictionary *s = section(d, @"spatial");
+    p.spatial = {flag(s, @"on", false), number(s, @"angle", 30, 5, 90), number(s, @"amount", 0.8, 0, 1),
+                 number(s, @"distance", 1, 0.3, 5), (int)number(s, @"mode", 0, 0, 1),
+                 number(s, @"surround", 0.5, 0, 1), number(s, @"height", 0.3, 0, 1),
+                 (int)number(s, @"hrtf", 1, 0, 1), number(s, @"room", 0.4, 0, 1),
+                 flag(s, @"headTracking", false), flag(s, @"headInvert", false)};
+    NSDictionary *r = section(d, @"reverb");
+    p.reverb = {flag(r, @"on", false), number(r, @"decay", 1.8, 0.2, 8), number(r, @"predelay", 20, 0, 200),
+                number(r, @"damping", 6000, 1000, 16000), number(r, @"width", 1, 0, 1), number(r, @"mix", 0.25, 0, 1)};
+    NSDictionary *l = section(d, @"limiter");
+    p.limiter = {flag(l, @"on", true), number(l, @"ceiling", -1, -12, 0)};
+    return p;
+}
+
+extern "C" NSDictionary *TBEmbeddedInitialConfig(void) {
+    NSDictionary *full=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreEmbedded.full.v1"];
+    if(full)return full;
+    NSMutableArray *bands=[NSMutableArray array];
+    for(int i=0;i<settings.count.load();i++){auto &b=settings.bands[i];[bands addObject:@{@"frequency":@(b.hz.load()),@"gain":@(b.gain.load()),@"q":@(b.q.load()),@"type":@(b.type.load()),@"enabled":@(b.on.load())}];}
+    return @{@"bands":bands,@"enabled":@(settings.on.load()),@"preamp":@(settings.preamp.load()),@"autoPreamp":@NO,@"speakerProtect":@NO,
+        @"comp":@{@"on":@(settings.comp.load())},@"crossfeed":@{@"on":@(settings.crossfeed.load())},
+        @"spatial":@{@"on":@(settings.spatial.load()),@"mode":@1,@"headTracking":@(settings.headTrack.load()),@"headInvert":@(settings.headInvert.load())},
+        @"reverb":@{@"on":@(settings.reverb.load()),@"mix":@0.18},@"width":@{@"on":@(settings.stereo.load()),@"width":@(settings.width.load())}};
+}
+extern "C" void TBEmbeddedApplyConfig(NSDictionary *config) {
+    // Called on the main queue. Route snapshots modify a copy, never the editor's base settings.
+    NSMutableDictionary *d=[config mutableCopy];
+    AVAudioSessionPortDescription *port=AVAudioSession.sharedInstance.currentRoute.outputs.firstObject;
+    NSString *type=port.portType?:@"";
+    NSString *group=([type isEqual:AVAudioSessionPortBuiltInSpeaker]||[type isEqual:AVAudioSessionPortBuiltInReceiver])?@"speaker":
+        ([type isEqual:AVAudioSessionPortHeadphones]||[type isEqual:AVAudioSessionPortLineOut])?@"wired":
+        [type hasPrefix:@"Bluetooth"]?@"bluetooth":[type isEqual:AVAudioSessionPortAirPlay]?@"airplay":
+        [type isEqual:AVAudioSessionPortCarAudio]?@"carplay":([type isEqual:AVAudioSessionPortUSBAudio]||[type isEqual:AVAudioSessionPortHDMI])?@"usb":@"other";
+    NSDictionary *routing=section(d,@"routing");
+    NSDictionary *rule=section(routing,@"devices")[port.UID?:@""]?:section(routing,@"types")[group];
+    if([routing[@"enabled"] boolValue]&&[rule isKindOfClass:NSDictionary.class]) {
+        if([rule[@"mode"] isEqual:@"off"])d[@"enabled"]=@NO;
+        else if([rule[@"mode"] isEqual:@"preset"]){NSDictionary *preset=section(rule,@"preset");
+            if(preset[@"bands"])d[@"bands"]=preset[@"bands"];
+            if(preset[@"preamp"])d[@"preamp"]=preset[@"preamp"];
+            NSDictionary *fx=section(preset,@"effects");
+            for(NSString *k in fx){if([fx[k] isKindOfClass:NSDictionary.class]&&[d[k] isKindOfClass:NSDictionary.class]){NSMutableDictionary *m=[d[k] mutableCopy];[m addEntriesFromDictionary:fx[k]];d[k]=m;}else d[k]=fx[k];}
+            d[@"enabled"]=@YES;
+        }
+    }
+    NSArray *bands=[d[@"bands"] isKindOfClass:NSArray.class]?d[@"bands"]:@[];
+    timbre::Band curve[MaxBands+2];int count=0;
+    for(id item in bands){if(count==MaxBands)break;if(![item isKindOfClass:NSDictionary.class])continue;
+        NSDictionary *b=item;auto &v=settings.bands[count];
+        v.hz=number(b,@"frequency",1000,5,22000);v.gain=number(b,@"gain",0,-24,24);v.q=number(b,@"q",1,0.05,40);v.type=(int)number(b,@"type",0,0,7);v.on=flag(b,@"enabled",true);
+        curve[count++]={v.on.load(),(timbre::FilterType)v.type.load(),v.hz.load(),v.gain.load(),v.q.load()};
+    }
+    settings.count=count;settings.on=flag(d,@"enabled",false);
+    settings.speakerProtect=flag(d,@"speakerProtect",false)&&[group isEqual:@"speaker"];
+    int curveCount=count;if(settings.speakerProtect.load())for(int i=0;i<2;i++)curve[curveCount++]={true,timbre::FilterType::HighPass,150,0,.707};
+    double pre=number(d,@"preamp",-6,-30,0);
+    if(flag(d,@"autoPreamp",false)){try{pre=-std::min(24.,std::max(0.,timbre::curvePeakDB(curve,curveCount,48000)+.3));}catch(...){pre=-24;}}
+    settings.preamp=pre;
+    timbre::EffectsParams fx=parseEffects(d);
+    settings.comp=fx.comp.on;settings.crossfeed=fx.crossfeed.on;settings.spatial=fx.spatial.on;settings.reverb=fx.reverb.on;settings.stereo=fx.width.on;settings.width=fx.width.width;
+    settings.headTrack=fx.spatial.headTracking;settings.headInvert=fx.spatial.headInvert;
+    os_unfair_lock_lock(&fxLock);embeddedFX=fx;os_unfair_lock_unlock(&fxLock);fullConfigActive=true;
+    settings.generation.fetch_add(1,std::memory_order_release);
+    dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();});
+}
+extern "C" NSDictionary *TBEmbeddedStatus(void) {return @{@"frames":@(processed.load()),@"enabled":@(settings.on.load()),@"callbacks":@(callbacks.load())};}
+extern "C" UIViewController *TBEmbeddedDiagnosticsController(void) {
+    TBNativeController *c=[[TBNativeController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    return c;
+}
 
 @interface TBLauncher : NSObject
 @property(nonatomic,strong) UIButton *button;
@@ -564,13 +675,16 @@ static UIWindow *TBNativeWindow(void) {
     self.button.hidden=self.editorNavigation.presentingViewController!=nil;
     self.button.frame=CGRectMake(window.bounds.size.width-92,window.safeAreaInsets.top+8,82,36);[window bringSubviewToFront:self.button];
 }
-- (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;TBNativeController *controller=[[TBNativeController alloc] initWithStyle:UITableViewStyleInsetGrouped];UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
+- (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;UIViewController *controller=TBCreateEmbeddedController();UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
 @end
 
 __attribute__((constructor)) static void launchTimbreNative() {
     @autoreleasepool {
         mach_timebase_info_data_t timebase;mach_timebase_info(&timebase);headFreshTicks=(uint64_t)(0.5*1e9*timebase.denom/timebase.numer);
+        TBInstallPageDiagnostics();
         loadSettings();
+        NSDictionary *full=[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"TimbreEmbedded.full.v1"];
+        if(full)TBEmbeddedApplyConfig(full);
         tbCopy=(TBKCopy)dlsym(RTLD_DEFAULT,"SecItemCopyMatching");
         tbAdd=(TBKAdd)dlsym(RTLD_DEFAULT,"SecItemAdd");
         tbUpdate=(TBKUpdate)dlsym(RTLD_DEFAULT,"SecItemUpdate");
@@ -582,3 +696,4 @@ __attribute__((constructor)) static void launchTimbreNative() {
         dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();}];});
     }
 }
+
