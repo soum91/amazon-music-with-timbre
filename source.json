@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
+      "localizedDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412783",
+          "buildVersion": "26.37.1.412783",
+          "date": "2026-10-27",
+          "localizedDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412783/Amazon-Music-Timbre-Moveable-11.ipa",
+          "size": 175281085,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412782",
           "buildVersion": "26.37.1.412782",
@@ -36,11 +45,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412782",
+      "version": "26.37.1.412783",
       "versionDate": "2026-10-27",
-      "versionDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412782/Amazon-Music-Timbre-Original-UI-10.ipa",
-      "size": 175276991
+      "versionDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412783/Amazon-Music-Timbre-Moveable-11.ipa",
+      "size": 175281085
     }
   ],
   "news": [],
