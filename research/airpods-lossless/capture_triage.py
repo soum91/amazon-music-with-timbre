@@ -32,7 +32,7 @@ def exact(stream, size):
     return data
 
 
-def records(stream):
+def btsnoop_records(stream):
     header = exact(stream, 16)
     if header[:8] != b"btsnoop\0":
         raise ValueError("expected btsnoop; PacketLogger .pklg must be converted first")
@@ -56,6 +56,42 @@ def records(stream):
         else:
             kind = {2: "command", 3: "event"}.get(flags & 0xFFFF, "other")
         yield kind, payload, cut, drops
+
+
+def packetlogger_records(stream):
+    """PacketLogger length excludes its own word, includes timestamp + type.
+    Container layout checked against Wireshark wiretap/packetlogger.c.
+    """
+    while True:
+        raw = stream.read(4)
+        if not raw:
+            return
+        if len(raw) != 4:
+            raise ValueError("truncated PacketLogger length")
+        length = struct.unpack(">I", raw)[0]
+        if length < 9 or length > MAX_RECORD:
+            raise ValueError("invalid PacketLogger record length")
+        body = exact(stream, length)
+        _, micros = struct.unpack(">II", body[:8])
+        if micros >= 1000000:
+            raise ValueError("invalid PacketLogger microseconds")
+        kind = {0: "command", 1: "event"}.get(body[8], "other")
+        data = body[9:]
+        # PacketLogger may retain the declared ACL size but clip logged payload.
+        cut = (body[8] in (2, 3) and len(data) >= 4
+               and len(data) - 4 < int.from_bytes(data[2:4], "little"))
+        yield kind, data, cut, 0
+
+
+def records(stream):
+    prefix = stream.read(8)
+    stream.seek(0)
+    if len(prefix) < 8:
+        raise ValueError("capture header is missing or truncated")
+    if prefix == b"btsnoop\0":
+        yield from btsnoop_records(stream)
+    else:
+        yield from packetlogger_records(stream)
 
 
 def analyze(stream):
