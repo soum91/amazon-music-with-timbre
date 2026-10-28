@@ -81,10 +81,67 @@ static NSString *webHost(id web){
     id url=((id(*)(id,SEL))objc_msgSend)(web,NSSelectorFromString(@"URL"));
     return [url isKindOfClass:NSURL.class]?[url host]?:@"(no host)":@"(no URL)";
 }
+// Exception #160 is the base controller's rejected-navigation branch.
+// Restore the bundled Amazon host policy only during this controller's original
+// synchronous navigation decision. TLS and all original auth/result handlers run.
+static __thread const void *tbAuthNavigationURL;
+static NSArray *bundledAmazonDomains(void){
+    static NSArray *domains;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        NSString *path=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"configurations/configuration.json"];
+        NSData *data=[NSData dataWithContentsOfFile:path];
+        id config=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+        NSMutableArray *found=[NSMutableArray array];
+        NSArray *approved=@[@".amazon.com",@".amazon.co.uk",@".amazon.fr",@".amazon.de",@".amazon.it",@".amazon.es",@".amazon.co.jp",@".amazon.in",@".amazon.ca",@".amazon.com.au",@".amazon.com.mx",@".amazon.com.br"];
+        id rows=[config isKindOfClass:NSDictionary.class]?config[@"licensed_trusted_domains"]:nil;
+        for(id row in [rows isKindOfClass:NSArray.class]?rows:@[]){
+            if(![row isKindOfClass:NSDictionary.class]||![row[@"regions"] isKindOfClass:NSArray.class]||![row[@"regions"] containsObject:@"ALL"])continue;
+            id values=row[@"value"];for(id value in [values isKindOfClass:NSArray.class]?values:@[])if([approved containsObject:value])[found addObject:value];
+        }
+        domains=[found copy];
+    });return domains;
+}
+static BOOL bundledAmazonURL(NSURL *url){
+    if(![url isKindOfClass:NSURL.class]||![url.scheme.lowercaseString isEqual:@"https"]||url.user.length||url.password.length||(url.port&&url.port.integerValue!=443))return NO;
+    NSString *host=url.host.lowercaseString;if(!host.length)return NO;
+    for(NSString *domain in bundledAmazonDomains())if([host hasSuffix:domain])return YES;
+    return NO;
+}
+static void installAuthDomainCompatibility(void){
+    SEL selector=NSSelectorFromString(@"isTrustedDomain");Method method=class_getInstanceMethod(NSURL.class,selector);
+    NSString *key=@"DeviceAuthorization.bundledDomainCompatibility";
+    if(installed(key)||(!matches(method,"",'B')&&!matches(method,"",'c')))return;
+    IMP original=method_getImplementation(method);
+    IMP replacement=imp_implementationWithBlock(^BOOL(NSURL *url){
+        BOOL trusted=((BOOL(*)(id,SEL))original)(url,selector);if(trusted)return trusted;
+        NSURL *navigationURL=(__bridge NSURL *)tbAuthNavigationURL;
+        if(navigationURL&&[url isEqual:navigationURL]&&bundledAmazonURL(url)){
+            note([NSString stringWithFormat:@"Device authorization: restored bundled HTTPS host policy for %@",url.host.lowercaseString]);return YES;
+        }return trusted;
+    });
+    class_replaceMethod(NSURL.class,selector,replacement,method_getTypeEncoding(method));mark(key);
+}
+static void watchAuthNavigationPolicy(Class cls){
+    if(cls!=NSClassFromString(@"AMLicensedMusicDeviceAuthorizationViewController"))return;
+    SEL selector=NSSelectorFromString(@"webView:decidePolicyForNavigationAction:decisionHandler:");
+    Method method=class_getInstanceMethod(cls,selector);NSString *key=@"DeviceAuthorization.originalNavigationPolicy";
+    if(installed(key)||!matches(method,"@@@",'v'))return;
+    IMP original=method_getImplementation(method);
+    IMP replacement=imp_implementationWithBlock(^(id object,id web,id action,id handler){
+        id request=[action respondsToSelector:NSSelectorFromString(@"request")]?((id(*)(id,SEL))objc_msgSend)(action,NSSelectorFromString(@"request")):nil;
+        NSURL *url=[request isKindOfClass:NSURLRequest.class]?[request URL]:nil;
+        const void *previous=tbAuthNavigationURL;
+        tbAuthNavigationURL=[object class]==cls?(__bridge const void *)url:NULL;
+        @try{((void(*)(id,SEL,id,id,id))original)(object,selector,web,action,handler);}
+        @finally{tbAuthNavigationURL=previous;}
+    });
+    if(!class_addMethod(cls,selector,replacement,method_getTypeEncoding(method)))class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));mark(key);
+}
 static void watchWebDelegate(id delegate){
     if(!delegate)return;
     @synchronized(NSProcessInfo.class){
         Class cls=[delegate class];
+        watchAuthNavigationPolicy(cls);
         for(NSString *name in @[@"webView:didStartProvisionalNavigation:",@"webView:didCommitNavigation:",@"webView:didFinishNavigation:",@"webView:didFailProvisionalNavigation:withError:",@"webView:didFailNavigation:withError:"]){
             SEL sel=NSSelectorFromString(name);NSString *key=[NSString stringWithFormat:@"WebDelegate.%@.%@",NSStringFromClass(cls),name];Method m=class_getInstanceMethod(cls,sel);BOOL failure=[name containsString:@"withError"];
             if(installed(key)||!matches(m,failure?"@@@":"@@",'v'))continue;
@@ -125,6 +182,7 @@ static void installDeviceAuthorizationLoadingFix(void){
 }
 static void installNativePageHooks(void){
     installDeviceAuthorizationLoadingFix();
+    installAuthDomainCompatibility();
     Class web=NSClassFromString(@"WKWebView");SEL sel=NSSelectorFromString(@"setNavigationDelegate:");Method m=class_getInstanceMethod(web,sel);NSString *key=@"WKWebView.setNavigationDelegate:";
     if(!installed(key)&&matches(m,"@",'v')){IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^(id object,id delegate){watchWebDelegate(delegate);((void(*)(id,SEL,id))original)(object,sel,delegate);});class_replaceMethod(web,sel,replacement,method_getTypeEncoding(m));mark(key);}
     sel=NSSelectorFromString(@"loadRequest:");m=class_getInstanceMethod(web,sel);key=@"WKWebView.loadRequest:";
@@ -248,7 +306,7 @@ void TBInspectAPIResponse(NSData *data,NSURLResponse *response) {
 }
 NSString *TBFrontendDiagnosticsText(void) {
     os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
-    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 17",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 18",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
     [out addObjectsFromArray:current?:@[@"No frontend events captured yet."]];
     if(!current.count){NSArray *previous=[NSUserDefaults.standardUserDefaults arrayForKey:@"Timbre.frontend.previous.v1"];if(previous.count){[out addObject:@"Saved events from an earlier launch (check timestamps):"];[out addObjectsFromArray:previous];}}
     [out addObject:@"Coverage: native navigation-ready/props acknowledgements, verified bridgeless RCTHost error callback, RCTInstance startup/load stages, bundle resolution, root-view creation, legacy exception methods and callback errors. C++ internals and errors handled entirely in JavaScript remain outside coverage. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];

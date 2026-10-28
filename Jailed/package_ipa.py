@@ -67,8 +67,8 @@ def package(source, library, output):
     lib = Path(library).read_bytes()
     if lib[:4] != b'\xcf\xfa\xed\xfe':
         raise ValueError('Invalid Timbre library')
-    if b'TimbreEmbeddedBuild17' not in lib:
-        raise ValueError('Expected GUI 17 library marker; refusing a stale compiled library')
+    if b'TimbreEmbeddedBuild18' not in lib:
+        raise ValueError('Expected GUI 18 library marker; refusing a stale compiled library')
     with zipfile.ZipFile(io.BytesIO(raw)) as original:
         candidates = [n for n in original.namelist() if n.startswith('Payload/') and n.count('/') == 2 and n.endswith('.app/Info.plist')]
         if len(candidates) != 1:
@@ -86,7 +86,7 @@ def package(source, library, output):
         plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Music Timbre'
         plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
-        plist['TimbreGUIBuild'] = 17
+        plist['TimbreGUIBuild'] = 18
         plist['NSMotionUsageDescription'] = 'Timbre uses motion from compatible headphones to keep the spatial sound stage stable as you turn your head.'
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.

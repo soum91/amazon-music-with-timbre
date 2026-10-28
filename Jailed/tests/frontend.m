@@ -52,6 +52,17 @@ static int webRequests,webFinishes,webFailures;
 - (void)webView:(id)web didFinishNavigation:(id)navigation {NSCAssert([navigation isEqual:@"navigation-token"],@"Navigation altered");webFinishes++;}
 - (void)webView:(id)web didFailProvisionalNavigation:(id)navigation withError:(NSError *)error {NSCAssert(error.code==-1003,@"Error altered");webFailures++;}
 @end
+@interface NSURL (TrustFixture)
+- (BOOL)isTrustedDomain;
+@end
+@implementation NSURL (TrustFixture)
+- (BOOL)isTrustedDomain{return [self.host isEqual:@"already-trusted.test"];}
+@end
+@interface TestNavigationAction:NSObject
+@property(nonatomic,strong) NSURLRequest *request;
+@end
+@implementation TestNavigationAction @end
+static int policyCalls;
 static int cookieLoads,nonceLoads;
 @interface AMLicensedMusicBaseViewController:NSObject
 @property(nonatomic) NSInteger originalMode;
@@ -61,11 +72,13 @@ static int cookieLoads,nonceLoads;
 - (void)reloadWebView;
 - (void)startLoadingWebViewWithCookies;
 - (void)startLoadingWebViewWithNonce:(id)nonce;
+- (void)webView:(id)web decidePolicyForNavigationAction:(TestNavigationAction *)action decisionHandler:(void(^)(NSInteger))handler;
 @end
 @implementation AMLicensedMusicBaseViewController
 - (NSInteger)webViewAuth{return self.originalMode;}
 - (NSURL *)baseURL{return self.destination;}
 - (void)reloadWebView{NSInteger mode=[self webViewAuth];if(mode==1)[self startLoadingWebViewWithCookies];else if(mode==2)[self startLoadingWebViewWithNonce:nil];}
+- (void)webView:(id)web decidePolicyForNavigationAction:(TestNavigationAction *)action decisionHandler:(void(^)(NSInteger))handler{policyCalls++;handler([action.request.URL isTrustedDomain]?1:0);}
 - (void)startLoadingWebViewWithCookies{cookieLoads++;}
 - (void)startLoadingWebViewWithNonce:(id)nonce{NSCAssert(!nonce,@"Unexpected nonce");nonceLoads++;}
 @end
@@ -79,6 +92,11 @@ int main(void){@autoreleasepool{
     Class notificationClass=objc_allocateClassPair(NSObject.class,"_TtC26AlcatrazReactNativeModules22NotificationModuleImpl",0);
     class_addMethod(notificationClass,NSSelectorFromString(@"navigationSystemReady"),(IMP)navReady,"v@:");
     class_addMethod(notificationClass,NSSelectorFromString(@"onPropsReceived:"),(IMP)propsReceived,"v@:@");objc_registerClassPair(notificationClass);
+    NSString *fixtureDir=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"configurations"];
+    [NSFileManager.defaultManager createDirectoryAtPath:fixtureDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSDictionary *fixture=@{@"licensed_trusted_domains":@[@{@"regions":@[@"ALL"],@"value":@[@".amazon.com",@".amazon.ca",@".evil.test"]}]};
+    NSData *fixtureData=[NSJSONSerialization dataWithJSONObject:fixture options:0 error:nil];
+    NSCAssert([fixtureData writeToFile:[fixtureDir stringByAppendingPathComponent:@"configuration.json"] atomically:YES],@"Cannot write bundled policy fixture");
     TBInstallFrontendDiagnostics();
     AMLicensedMusicDeviceAuthorizationViewController *auth=[AMLicensedMusicDeviceAuthorizationViewController new];
     auth.destination=[NSURL URLWithString:@"https://www.amazon.com/gp/dmusic/device/manage/device_auth?token=NEVER_EXPORT"];
@@ -90,6 +108,20 @@ int main(void){@autoreleasepool{
     auth.destination=nil;NSCAssert([auth webViewAuth]==0,@"Missing destination modified");
     OtherDeviceAuthorization *other=[OtherDeviceAuthorization new];other.destination=[NSURL URLWithString:@"https://www.amazon.com/gp/dmusic/device/manage/device_auth"];NSCAssert([other webViewAuth]==0,@"Other subclass modified");
     AMLicensedMusicBaseViewController *base=[AMLicensedMusicBaseViewController new];base.destination=other.destination;NSCAssert([base webViewAuth]==0,@"Base controller modified");
+    WKWebView *authWeb=[WKWebView new];authWeb.navigationDelegate=auth;
+    TestNavigationAction *action=[TestNavigationAction new];
+    NSArray *allowed=@[@"https://music.amazon.com/NA/BMWV/device_auth?token=NEVER_EXPORT",@"https://www.amazon.ca/ap/signin",@"https://www.amazon.com/done",@"https://already-trusted.test/"];
+    NSArray *denied=@[@"http://music.amazon.com/",@"https://music.amazon.com.evil.test/",@"https://evilamazon.com/",@"https://user:NEVER_EXPORT@music.amazon.com/",@"https://music.amazon.com:444/",@"https://www.evil.test/"];
+    for(NSString *destination in [allowed arrayByAddingObjectsFromArray:denied]){
+        action.request=[NSURLRequest requestWithURL:[NSURL URLWithString:destination]];
+        __block int decisions=0;__block NSInteger policy=-1;
+        [auth webView:authWeb decidePolicyForNavigationAction:action decisionHandler:^(NSInteger value){decisions++;policy=value;}];
+        NSCAssert(decisions==1&&policy==([allowed containsObject:destination]?1:0),@"Wrong policy or repeated decision");
+        if(![destination containsString:@"already-trusted"])NSCAssert(![action.request.URL isTrustedDomain],@"Scoped policy escaped into other calls");
+    }
+    authWeb.navigationDelegate=other;action.request=[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://music.amazon.com/"]];
+    __block NSInteger otherPolicy=-1;[other webView:authWeb decidePolicyForNavigationAction:action decisionHandler:^(NSInteger value){otherPolicy=value;}];
+    NSCAssert(otherPolicy==0&&policyCalls==allowed.count+denied.count+1,@"Other delegate changed or original policy skipped");
     id notification=[notificationClass new];((void(*)(id,SEL))objc_msgSend)(notification,NSSelectorFromString(@"navigationSystemReady"));
     ((void(*)(id,SEL,id))objc_msgSend)(notification,NSSelectorFromString(@"onPropsReceived:"),@"NEVER_EXPORT");
     WKWebView *web=[WKWebView new];TestWebDelegate *webDelegate=[TestWebDelegate new];web.navigationDelegate=webDelegate;

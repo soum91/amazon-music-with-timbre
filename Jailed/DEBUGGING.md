@@ -84,3 +84,11 @@ callbacks. This is not a functional fix and may expose placeholder content.
 GUI 16 report confirms repeated reloads of AMLicensedMusicDeviceAuthorizationViewController without either cookie/nonce loading call. Static inspection confirms its webViewAuth returns 0; the base reload hides the web view and animates its spinner but starts requests only for modes 1 and 2. GUI 17 maps only mode 0 on that exact class, with an HTTPS music.amazon regional URL, to the original mode-1 cookie refresh flow. Existing modes, other classes, non-Amazon destinations and all server authorization callbacks are unchanged. No successful authorization is fabricated and no dismissal is forced. On-device completion remains to be verified.
 
 Tests exercise stalled-to-cookie dispatch, existing cookie/nonce routes, nil/unsafe destinations, base/other subclasses and secret redaction.
+
+## GUI 18: scoped bundled-domain compatibility
+
+GUI 17 device report confirms cookie requests now start but navigation never commits; the recording shows Exception #160. Original en-CA localization maps this to licensed_music_webview_error_redirection_desc. In AMLicensedMusicBaseViewController's navigation policy, code 4 is raised when isTrustedDomain or the secure-scheme check fails. NSURL's isTrustedDomain reads licensed_trusted_domains; the original bundled configuration includes music.amazon.com through .amazon.com.
+
+GUI 18 restores only the bundled Amazon domain entries while the exact device-authorization controller runs its original synchronous navigation policy, and only for the URL currently being checked. HTTPS, no URL credentials, and default/443 port are mandatory for fallback. Original successful trust results, native decision callbacks, cookie refresh and server authorization handlers are preserved. No blanket delegate allow, TLS exception or success/dismiss callback is introduced. This is a targeted compatibility repair; actual server completion still needs device verification.
+
+Tests simulate an empty runtime trust result, exercise bundled Amazon redirects and callback routes, reject lookalike hosts, insecure schemes, URL credentials and unexpected ports, ignore non-Amazon bundled entries, and verify the scoped fallback does not affect other delegates/calls.
