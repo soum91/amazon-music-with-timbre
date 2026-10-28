@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 extern void TBInstallFrontendDiagnostics(void);
+extern void TBRecordNativePageEvent(NSString *);
 extern void TBInspectAPIResponse(NSData *,NSURLResponse *);
 extern NSString *TBFrontendDiagnosticsText(void);
 static int fatalCalls,callbackCalls;
@@ -149,5 +150,8 @@ int main(void){@autoreleasepool{
     NSUInteger before=[text componentsSeparatedByString:@"API error envelope"].count;
     TBInspectAPIResponse([@"{\"errors\":[],\"error\":null,\"data\":{}}" dataUsingEncoding:NSUTF8StringEncoding],response);
     NSCAssert([TBFrontendDiagnosticsText() componentsSeparatedByString:@"API error envelope"].count==before,@"Empty errors reported as failure");
+    for(int i=0;i<80;i++)TBRecordNativePageEvent(@"Repeated reload fixture");
+    NSString *afterFlood=TBFrontendDiagnosticsText();
+    NSCAssert([afterFlood containsString:@"Authorization policy decisions"]&&[afterFlood containsString:@"Decision host=music.amazon.com"]&&![afterFlood containsString:@"NEVER_EXPORT"],@"Policy decisions lost to reload flood or leaked secrets");
     puts("Frontend diagnostics: bridgeless host/errors/bundle load, legacy callbacks, ABI, JS stack, API codes and redaction passed");
 }return 0;}

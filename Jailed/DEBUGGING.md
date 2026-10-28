@@ -92,3 +92,11 @@ GUI 17 device report confirms cookie requests now start but navigation never com
 GUI 18 restores only the bundled Amazon domain entries while the exact device-authorization controller runs its original synchronous navigation policy, and only for the URL currently being checked. HTTPS, no URL credentials, and default/443 port are mandatory for fallback. Original successful trust results, native decision callbacks, cookie refresh and server authorization handlers are preserved. No blanket delegate allow, TLS exception or success/dismiss callback is introduced. This is a targeted compatibility repair; actual server completion still needs device verification.
 
 Tests simulate an empty runtime trust result, exercise bundled Amazon redirects and callback routes, reject lookalike hosts, insecure schemes, URL credentials and unexpected ports, ignore non-Amazon bundled entries, and verify the scoped fallback does not affect other delegates/calls.
+
+## GUI 19: audio format support and durable authorization decisions
+
+Adds signed little-endian PCM 24-bit packed/24-in-32 and 32-bit integer conversion alongside float32/PCM16. Processing still applies only to supported decoded stereo buffers. Disabled processing preserves original buffers. Invalid layouts and big-endian formats are bypassed. PCM unit tests cover alignment, clipping, NaN and guard bytes with sanitizers.
+
+Diagnostics now show observed DSP format separately from actual AVAudioSession rate, preferred rate and output port type/channel count. Source codec/bit depth and endpoint DAC depth remain explicitly unverified. A user-triggered 48 kHz preference calls setPreferredSampleRate without forcing session activation, replacing Amazon's decoder, or selecting a Bluetooth codec. No lossless AirPods or Atmos reconstruction is claimed.
+
+Home remains unresolved in GUI 18. GUI 19 retains a separate bounded navigation decision/trust buffer so reload spam cannot erase the policy result; URL query strings, credentials and port names are omitted. No further auth behavior change is made.

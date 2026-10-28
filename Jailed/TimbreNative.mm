@@ -20,6 +20,7 @@ extern "C" NSString *TBPageDiagnosticsText(void);
 #import <os/lock.h>
 #include <dlfcn.h>
 #include <atomic>
+#include "TimbrePCM.h"
 static std::atomic<uint64_t> tbDragBegan{0},tbDragEnded{0};
 #include <algorithm>
 #include <cmath>
@@ -192,6 +193,8 @@ std::atomic<uint64_t> callbacks{0}, processed{0}, rejected{0}, busy{0}, registra
 std::atomic<uint64_t> lastProcessed{0};
 std::atomic<int> hookedImages{0}, lastReject{0};
 std::atomic<double> observedRate{0};
+std::atomic<unsigned> observedBits{0},observedBytes{0},observedChannels{0};
+std::atomic<bool> observedFloat{false},observedPlanar{false};
 struct Stream {
     AUGraph graph=nullptr; AUNode node=0; UInt32 bus=0;
     AURenderCallbackStruct source{};
@@ -315,17 +318,22 @@ static OSStatus render(void *ctx,AudioUnitRenderActionFlags *flags,const AudioTi
     if(s.rendering.test_and_set(std::memory_order_acquire)){busy.fetch_add(1);return result;}
     const auto &f=s.format;
     const bool fl=(f.mFormatFlags&kAudioFormatFlagIsFloat)&&f.mBitsPerChannel==32;
-    const bool i16=!(f.mFormatFlags&kAudioFormatFlagIsFloat)&&(f.mFormatFlags&kAudioFormatFlagIsSignedInteger)&&f.mBitsPerChannel==16;
+    const unsigned formatChannels=(f.mFormatFlags&kAudioFormatFlagIsNonInterleaved)?1:2;
+    const unsigned bytes=f.mBytesPerFrame/formatChannels;
+    const bool integer=!(f.mFormatFlags&kAudioFormatFlagIsFloat)&&(f.mFormatFlags&kAudioFormatFlagIsSignedInteger)&&timbre_pcm::supported(f.mBitsPerChannel,bytes);
+    const bool high=f.mFormatFlags&kAudioFormatFlagIsAlignedHigh;
+    observedRate=f.mSampleRate;observedBits=f.mBitsPerChannel;observedBytes=bytes;observedChannels=f.mChannelsPerFrame;observedFloat=(f.mFormatFlags&kAudioFormatFlagIsFloat)!=0;
     const bool planar=buffers->mNumberBuffers==2&&buffers->mBuffers[0].mNumberChannels==1&&buffers->mBuffers[1].mNumberChannels==1;
     const bool inter=buffers->mNumberBuffers==1&&buffers->mBuffers[0].mNumberChannels==2;
+    observedPlanar=planar;
     int reject=0;
     if(f.mFormatID!=kAudioFormatLinearPCM)reject=1;
-    else if((!fl&&!i16)||(f.mFormatFlags&kAudioFormatFlagIsBigEndian))reject=2;
-    else if(f.mChannelsPerFrame!=2||(!planar&&!inter))reject=3;
+    else if((!fl&&!integer)||(f.mFormatFlags&kAudioFormatFlagIsBigEndian))reject=2;
+    else if(f.mChannelsPerFrame!=2||(!planar&&!inter)||f.mBytesPerFrame!=bytes*formatChannels||(fl&&bytes!=4)||((formatChannels==1)!=planar))reject=3;
     else if(frames>(1u<<20))reject=4;
     else for(UInt32 i=0;i<buffers->mNumberBuffers;i++) {
         auto &b=buffers->mBuffers[i];
-        if(!b.mData||b.mDataByteSize<(uint64_t)frames*b.mNumberChannels*(fl?4:2)){reject=4;break;}
+        if(!b.mData||b.mDataByteSize<(uint64_t)frames*b.mNumberChannels*bytes){reject=4;break;}
     }
     if(reject){lastReject=reject;rejected.fetch_add(1);s.rendering.clear(std::memory_order_release);return result;}
     observedRate=f.mSampleRate;configure(s);
@@ -335,13 +343,13 @@ static OSStatus render(void *ctx,AudioUnitRenderActionFlags *flags,const AudioTi
             UInt32 n=std::min((UInt32)Chunk,frames-at);
             for(UInt32 i=0;i<n;i++)for(UInt32 ch=0;ch<2;ch++) {
                 const auto &b=buffers->mBuffers[planar?ch:0];size_t idx=planar?(at+i):(2*(at+i)+ch);
-                scratch[2*i+ch]=fl?static_cast<float *>(b.mData)[idx]:static_cast<int16_t *>(b.mData)[idx]/32768.f;
+                scratch[2*i+ch]=fl?static_cast<float *>(b.mData)[idx]:timbre_pcm::read(static_cast<uint8_t *>(b.mData)+idx*bytes,f.mBitsPerChannel,bytes,high);
             }
             processChunk(s,scratch,n);
             for(UInt32 i=0;i<n;i++)for(UInt32 ch=0;ch<2;ch++) {
                 auto &b=buffers->mBuffers[planar?ch:0];size_t idx=planar?(at+i):(2*(at+i)+ch);
                 if(fl)static_cast<float *>(b.mData)[idx]=scratch[2*i+ch];
-                else static_cast<int16_t *>(b.mData)[idx]=(int16_t)std::lrintf(std::clamp(scratch[2*i+ch],-1.f,32767.f/32768.f)*32768.f);
+                else timbre_pcm::write(static_cast<uint8_t *>(b.mData)+idx*bytes,scratch[2*i+ch],f.mBitsPerChannel,bytes,high);
             }
         }
         processed.fetch_add(frames,std::memory_order_relaxed);lastProcessed=mach_absolute_time();lastReject=0;
@@ -566,9 +574,16 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 @property(nonatomic,strong) UISegmentedControl *pages;
 @property(nonatomic,strong) TBResponseView *response;
 @end
+static NSString *tbRateRequestStatus=@"No rate preference requested by Timbre.";
+static NSString *tbAudioFormatReport(void){
+    AVAudioSession *session=AVAudioSession.sharedInstance;NSMutableArray *routes=[NSMutableArray array];BOOL bluetooth=NO;
+    for(AVAudioSessionPortDescription *port in session.currentRoute.outputs){[routes addObject:[NSString stringWithFormat:@"%@ (%lu channels)",port.portType,(unsigned long)port.channels.count]];if([port.portType isEqual:AVAudioSessionPortBluetoothA2DP]||[port.portType isEqual:AVAudioSessionPortBluetoothHFP]||[port.portType isEqual:AVAudioSessionPortBluetoothLE])bluetooth=YES;}
+    NSString *pcm=observedBits.load()?[NSString stringWithFormat:@"DSP input: %.0f Hz, %u-bit %@, %u channels, %@, %u bytes/sample",observedRate.load(),observedBits.load(),observedFloat.load()?@"float":@"integer",observedChannels.load(),observedPlanar.load()?@"planar":@"interleaved",observedBytes.load()]:@"DSP input: no PCM callback observed yet";
+    return [NSString stringWithFormat:@"%@\nSession actual: %.0f Hz; preferred: %.0f Hz\nOutput: %@\n%@\n%@\nSource codec/bit depth and final DAC bit depth: unverified. PCM format does not establish lossless delivery. Atmos objects are not available in this stereo DSP path.",pcm,session.sampleRate,session.preferredSampleRate,routes.count?[routes componentsJoinedByString:@", "]:@"no output",bluetooth?@"Bluetooth output: no lossless or 24-bit delivery claim; transport codec not exposed here.":@"Wired/other output: quality depends on source and hardware; not yet verified.",tbRateRequestStatus];
+}
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 18";
+    [super viewDidLoad];self.title=@"Timbre 19";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -591,7 +606,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?9:section==1?2:section==2?settings.count.load()+1:9;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?11:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
@@ -603,9 +618,11 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
+        if(r==9){cell.textLabel.text=@"Audio format and output route";cell.detailTextLabel.text=tbAudioFormatReport();cell.detailTextLabel.numberOfLines=0;}
+        if(r==10){cell.textLabel.text=@"Request 48 kHz session rate";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Optional preference; iOS chooses the actual rate. Does not change source quality or Bluetooth codec.";cell.detailTextLabel.numberOfLines=0;}
         if(r==8){cell.textLabel.text=@"Reveal gallery for 30 seconds";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Temporary overlay test; restores automatically. Tap again to restore early.";cell.detailTextLabel.numberOfLines=0;}
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild18";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild19";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -630,9 +647,10 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)index {
     [tableView deselectRowAtIndexPath:index animated:YES];
     NSInteger section=[self sourceSection:index.section];
+    if(section==0&&index.row==10){NSError *error=nil;BOOL ok=[AVAudioSession.sharedInstance setPreferredSampleRate:48000 error:&error];tbRateRequestStatus=ok?@"Timbre requested 48 kHz; check the actual session rate above.":[NSString stringWithFormat:@"48 kHz request failed: %@ %ld",error.domain?:@"unknown",(long)error.code];[self.tableView reloadData];return;}
     if(section==0&&index.row==8){NSString *result=tbRevealGallery();if(result){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Gallery visibility test" message:result preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];}else {UIViewController *presenter=tbEditorNavigation.presentingViewController;if(presenter)[presenter dismissViewControllerAnimated:YES completion:nil];else [self close];}return;}
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 18\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 19\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[tbKeyStatus() stringByAppendingFormat:@"\n\n%@",tbAudioFormatReport()],[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}

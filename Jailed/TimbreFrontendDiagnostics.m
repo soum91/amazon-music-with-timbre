@@ -8,6 +8,7 @@
 // cookies, credentials, callback argument dumps or exception extraData.
 static os_unfair_lock frontLock=OS_UNFAIR_LOCK_INIT;
 static NSMutableArray *events;
+static NSMutableArray *policyEvents;
 static NSMutableSet *hooks;
 static NSUInteger loads,loadFailures,callbackErrors,jsonResponses;
 static NSString *clean(id value,NSUInteger limit) {
@@ -28,6 +29,10 @@ static void note(NSString *text) {
     os_unfair_lock_unlock(&frontLock);
     // Exceptions survive a fatal termination; this list is intentionally small.
     [NSUserDefaults.standardUserDefaults setObject:snapshot forKey:@"Timbre.frontend.previous.v1"];
+}
+static void policyNote(NSString *text){
+    NSString *entry=[NSString stringWithFormat:@"%@ %@",[NSISO8601DateFormatter.new stringFromDate:NSDate.date],text];
+    os_unfair_lock_lock(&frontLock);if(!policyEvents)policyEvents=[NSMutableArray array];if(policyEvents.count>=24)[policyEvents removeObjectAtIndex:0];[policyEvents addObject:entry];os_unfair_lock_unlock(&frontLock);
 }
 static NSString *stackText(id stack) {
     if(![stack isKindOfClass:NSArray.class])return @"(no JS stack)";
@@ -113,7 +118,9 @@ static void installAuthDomainCompatibility(void){
     if(installed(key)||(!matches(method,"",'B')&&!matches(method,"",'c')))return;
     IMP original=method_getImplementation(method);
     IMP replacement=imp_implementationWithBlock(^BOOL(NSURL *url){
-        BOOL trusted=((BOOL(*)(id,SEL))original)(url,selector);if(trusted)return trusted;
+        BOOL trusted=((BOOL(*)(id,SEL))original)(url,selector);
+        if(tbAuthNavigationURL&&[url isEqual:(__bridge NSURL *)tbAuthNavigationURL])policyNote([NSString stringWithFormat:@"Trust host=%@ scheme=%@ original=%d bundledMatch=%d",url.host?:@"nil",url.scheme?:@"nil",trusted,bundledAmazonURL(url)]);
+        if(trusted)return trusted;
         NSURL *navigationURL=(__bridge NSURL *)tbAuthNavigationURL;
         if(navigationURL&&[url isEqual:navigationURL]&&bundledAmazonURL(url)){
             note([NSString stringWithFormat:@"Device authorization: restored bundled HTTPS host policy for %@",url.host.lowercaseString]);return YES;
@@ -130,9 +137,12 @@ static void watchAuthNavigationPolicy(Class cls){
     IMP replacement=imp_implementationWithBlock(^(id object,id web,id action,id handler){
         id request=[action respondsToSelector:NSSelectorFromString(@"request")]?((id(*)(id,SEL))objc_msgSend)(action,NSSelectorFromString(@"request")):nil;
         NSURL *url=[request isKindOfClass:NSURLRequest.class]?[request URL]:nil;
+        policyNote([NSString stringWithFormat:@"Navigation owner=%@ host=%@ scheme=%@",NSStringFromClass([object class]),url.host?:@"nil",url.scheme?:@"nil"]);
+        void (^originalHandler)(NSInteger)=handler;
+        void (^recordingHandler)(NSInteger)=^(NSInteger decision){policyNote([NSString stringWithFormat:@"Decision host=%@ policy=%ld",url.host?:@"nil",(long)decision]);originalHandler(decision);};
         const void *previous=tbAuthNavigationURL;
         tbAuthNavigationURL=[object class]==cls?(__bridge const void *)url:NULL;
-        @try{((void(*)(id,SEL,id,id,id))original)(object,selector,web,action,handler);}
+        @try{((void(*)(id,SEL,id,id,id))original)(object,selector,web,action,recordingHandler);}
         @finally{tbAuthNavigationURL=previous;}
     });
     if(!class_addMethod(cls,selector,replacement,method_getTypeEncoding(method)))class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));mark(key);
@@ -305,8 +315,9 @@ void TBInspectAPIResponse(NSData *data,NSURLResponse *response) {
     if(errorPresent&&!(error==NSNull.null&&!codes.count&&!errors.count))note([NSString stringWithFormat:@"API error envelope · %@ · %@ · error entries=%lu (messages omitted)",response.URL.host?:@"?",codes.count?[codes componentsJoinedByString:@", "]:@"no explicit code",(unsigned long)errors.count]);
 }
 NSString *TBFrontendDiagnosticsText(void) {
-    os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
-    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 18",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*policies=[policyEvents copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 19",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    [out addObject:@"Authorization policy decisions (separate bounded buffer):"];[out addObjectsFromArray:policies?:@[@"No navigation policy callback observed."]];
     [out addObjectsFromArray:current?:@[@"No frontend events captured yet."]];
     if(!current.count){NSArray *previous=[NSUserDefaults.standardUserDefaults arrayForKey:@"Timbre.frontend.previous.v1"];if(previous.count){[out addObject:@"Saved events from an earlier launch (check timestamps):"];[out addObjectsFromArray:previous];}}
     [out addObject:@"Coverage: native navigation-ready/props acknowledgements, verified bridgeless RCTHost error callback, RCTInstance startup/load stages, bundle resolution, root-view creation, legacy exception methods and callback errors. C++ internals and errors handled entirely in JavaScript remain outside coverage. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];
