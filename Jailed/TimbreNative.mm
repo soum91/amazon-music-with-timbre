@@ -490,6 +490,36 @@ static NSString *headStatus(){
 }
 @end
 
+// Main-thread metadata snapshots only: no labels, user text, screenshots or IDs.
+static NSMutableArray<NSString *> *tbViewSnapshots;
+static void tbDescribeView(UIView *view,NSMutableArray *lines,int depth,int *budget){
+    if((*budget)--<=0||depth>14)return;
+    NSString *kind=NSStringFromClass(view.class);
+    NSString *spin=[view isKindOfClass:UIActivityIndicatorView.class]?([((UIActivityIndicatorView *)view) isAnimating]?@" spinner=running":@" spinner=stopped"):@"";
+    [lines addObject:[NSString stringWithFormat:@"%*s%@ frame=%@ hidden=%d alpha=%.2f opaque=%d%@",depth*2,"",kind,NSStringFromCGRect(view.frame),view.hidden,view.alpha,view.opaque,spin]];
+    if(view.hidden||view.alpha<0.01)return;
+    // Visit frontmost siblings first so a large content tree cannot hide an overlay from the budget.
+    for(UIView *child in view.subviews.reverseObjectEnumerator)tbDescribeView(child,lines,depth+1,budget);
+}
+static void tbCaptureViewHierarchy(void){
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+    NSMutableArray *lines=[NSMutableArray array];int budget=220;
+    for(UIScene *scene in UIApplication.sharedApplication.connectedScenes){if(![scene isKindOfClass:UIWindowScene.class]||scene.activationState!=UISceneActivationStateForegroundActive)continue;
+        for(UIWindow *window in ((UIWindowScene *)scene).windows){if(window.hidden||window.alpha<0.01)continue;
+            UIViewController *top=window.rootViewController;while(top.presentedViewController)top=top.presentedViewController;
+            if([top isKindOfClass:UINavigationController.class])top=((UINavigationController *)top).visibleViewController;
+            if([NSStringFromClass(top.class) hasPrefix:@"TB"])return; // retain the app state before Timbre opens
+            [lines addObject:[NSString stringWithFormat:@"Window level=%.1f key=%d root=%@ top=%@",window.windowLevel,window.isKeyWindow,NSStringFromClass(window.rootViewController.class),NSStringFromClass(top.class)]];
+            tbDescribeView(window,lines,0,&budget);
+        }
+    }
+    if(!lines.count)return;
+    if(!tbViewSnapshots)tbViewSnapshots=[NSMutableArray array];
+    NSString *snapshot=[NSString stringWithFormat:@"%@\n%@",[NSISO8601DateFormatter.new stringFromDate:NSDate.date],[lines componentsJoinedByString:@"\n"]];
+    if(tbViewSnapshots.count>=4)[tbViewSnapshots removeObjectAtIndex:0];[tbViewSnapshots addObject:snapshot];
+}
+static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@"View hierarchy before Timbre opened (last four 1-second snapshots; siblings listed front to back; no view text)\n%@",[tbViewSnapshots componentsJoinedByString:@"\n\n"]?:@"No active-app snapshot captured yet."];}
+
 @interface TBNativeController : UITableViewController
 @property(nonatomic,strong) NSTimer *statusTimer;
 @property(nonatomic,strong) UISegmentedControl *pages;
@@ -497,7 +527,7 @@ static NSString *headStatus(){
 @end
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 14";
+    [super viewDidLoad];self.title=@"Timbre 15";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -533,7 +563,7 @@ static NSString *headStatus(){
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild14";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild15";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -559,7 +589,7 @@ static NSString *headStatus(){
     [tableView deselectRowAtIndexPath:index animated:YES];
     NSInteger section=[self sourceSection:index.section];
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 14\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),TBPageDiagnosticsText()];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 15\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}
@@ -800,7 +830,7 @@ __attribute__((constructor)) static void launchTimbreNative() {
         _dyld_register_func_for_add_image(tbObserveKeychain);
         realSet=&AUGraphSetNodeInputCallback;realStart=&AUGraphStart;realDispose=&DisposeAUGraph;
         _dyld_register_func_for_add_image(addedImage);
-        dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();}];});
+        dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];tbCaptureViewHierarchy();updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();tbCaptureViewHierarchy();}];});
     }
 }
 

@@ -37,3 +37,21 @@ Expected discrimination:
 
 No Home/Profile root cause has yet been established. A new diagnostic build must
 not be described as a functional fix. Report hook availability explicitly.
+
+Build 14 device report confirmed root-view creation, valid 33,130,948-byte local
+main.jsbundle, RCTInstanceDidLoadBundle, and no captured errors. Startup did not
+stop at bundle resolution/loading. Native viewDidLoad also returned.
+
+Hermes bytecode 96 was decoded without modification. AppNavigator function
+28633 calls NotificationModule.navigationSystemReady from navigation onReady.
+Wrapper function 76727 invokes NotificationModule.onPropsReceived for a supplied
+prop ID. Objective-C implementation methods verified in
+AlcatrazReactNativeModules are navigationSystemReady (v16@0:8) and
+onPropsReceived: (v24@0:8@16). Build 15 observes those exact boundaries, not
+assumed legacy callbacks. No prop IDs or initial-prop values are exported.
+
+Build 15 additionally preserves four main-thread active-app view-hierarchy
+snapshots before the Timbre sheet opens. Class/frame/hidden/alpha/opaque and
+spinner state only; no labels or identifiers. Frontmost siblings are visited
+first with a 220-node/14-depth limit so overlays appear before large content
+trees. This diagnoses visibility rather than forcibly removing loading views.

@@ -1,4 +1,6 @@
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 extern void TBInstallFrontendDiagnostics(void);
 extern void TBInspectAPIResponse(NSData *,NSURLResponse *);
 extern NSString *TBFrontendDiagnosticsText(void);
@@ -30,8 +32,16 @@ static int hostStarts,instanceLoads;
 @implementation RCTInstance
 - (void)_loadJSBundle:(NSURL *)url {NSCAssert([url.lastPathComponent isEqual:@"main.jsbundle"],@"Bundle URL changed");instanceLoads++;}
 @end
+static int navigationCalls,propsCalls;
+static void navReady(id self,SEL cmd){navigationCalls++;}
+static void propsReceived(id self,SEL cmd,id value){NSCAssert([value isEqual:@"NEVER_EXPORT"],@"Props identifier altered");propsCalls++;}
 int main(void){@autoreleasepool{
+    Class notificationClass=objc_allocateClassPair(NSObject.class,"_TtC26AlcatrazReactNativeModules22NotificationModuleImpl",0);
+    class_addMethod(notificationClass,NSSelectorFromString(@"navigationSystemReady"),(IMP)navReady,"v@:");
+    class_addMethod(notificationClass,NSSelectorFromString(@"onPropsReceived:"),(IMP)propsReceived,"v@:@");objc_registerClassPair(notificationClass);
     TBInstallFrontendDiagnostics();
+    id notification=[notificationClass new];((void(*)(id,SEL))objc_msgSend)(notification,NSSelectorFromString(@"navigationSystemReady"));
+    ((void(*)(id,SEL,id))objc_msgSend)(notification,NSSelectorFromString(@"onPropsReceived:"),@"NEVER_EXPORT");
     RCTHost *host=[RCTHost new];[host start];
     BOOL handled=[host instance:nil didReceiveJSErrorStack:@[@{@"methodName":@"renderBridgelessHome",@"file":@"main.jsbundle",@"lineNumber":@81,@"column":@9}] message:@"Bridgeless test exception" originalMessage:@"NEVER_EXPORT" name:@"TypeError" componentStack:@"NEVER_EXPORT" exceptionId:123456789 isFatal:YES extraData:@"NEVER_EXPORT"];
     NSCAssert(handled&&hostStarts==1,@"Host forwarding/return changed");
@@ -43,6 +53,7 @@ int main(void){@autoreleasepool{
     NSURLResponse *response=[[NSURLResponse alloc] initWithURL:[NSURL URLWithString:@"https://music.amazon.com/private?token=NEVER_EXPORT"] MIMEType:@"application/json" expectedContentLength:0 textEncodingName:@"utf-8"];
     NSData *body=[NSJSONSerialization dataWithJSONObject:@{@"errors":@[@{@"message":@"NEVER_EXPORT",@"extensions":@{@"code":@"UNAUTHORIZED"}}],@"token":@"NEVER_EXPORT"} options:0 error:nil];TBInspectAPIResponse(body,response);
     NSString *text=TBFrontendDiagnosticsText();
+    NSCAssert(navigationCalls==1&&propsCalls==1&&[text containsString:@"navigationSystemReady entered"]&&[text containsString:@"Page props acknowledged"],@"Navigation handoff capture or forwarding failed");
     NSCAssert(instanceLoads==1&&[text containsString:@"renderBridgelessHome"]&&[text containsString:@"exists=no"]&&[text containsString:@"Bridgeless RCTInstanceDidLoadBundle received"],@"Bridgeless lifecycle/error capture missing");
     NSCAssert(fatalCalls==1&&callbackCalls==1,@"Original callbacks not preserved");
     NSCAssert([text containsString:@"renderHome (main.jsbundle:12:34)"]&&[text containsString:@"TypeError test"],@"Exception/stack missing");
