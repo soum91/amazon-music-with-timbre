@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "GUI 17 repairs the stalled native device-authorization loading branch using Amazon's original authenticated cookie-refresh route. Server authorization remains intact. DSP, dispatch/guard tests and iOS compilation passed; on-device completion not yet verified.",
+      "localizedDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412791",
+          "buildVersion": "26.37.1.412791",
+          "date": "2026-10-28",
+          "localizedDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412791/Amazon-Music-Timbre-Navigation-Fix-18.ipa",
+          "size": 175306000,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412790",
           "buildVersion": "26.37.1.412790",
@@ -99,11 +108,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412790",
+      "version": "26.37.1.412791",
       "versionDate": "2026-10-28",
-      "versionDescription": "GUI 17 repairs the stalled native device-authorization loading branch using Amazon's original authenticated cookie-refresh route. Server authorization remains intact. DSP, dispatch/guard tests and iOS compilation passed; on-device completion not yet verified.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412790/Amazon-Music-Timbre-Authorization-Fix-17.ipa",
-      "size": 175303727
+      "versionDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412791/Amazon-Music-Timbre-Navigation-Fix-18.ipa",
+      "size": 175306000
     }
   ],
   "news": [],
