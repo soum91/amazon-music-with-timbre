@@ -78,3 +78,9 @@ covering at least 70% of its common parent, containing a hidden WKWebView and a
 visible Amazon spinner. It hides only that sibling, restores after 30 seconds
 or an early second tap, records the override, and never sends auth/navigation
 callbacks. This is not a functional fix and may expose placeholder content.
+
+## GUI 17: device-authorization loading repair
+
+GUI 16 report confirms repeated reloads of AMLicensedMusicDeviceAuthorizationViewController without either cookie/nonce loading call. Static inspection confirms its webViewAuth returns 0; the base reload hides the web view and animates its spinner but starts requests only for modes 1 and 2. GUI 17 maps only mode 0 on that exact class, with an HTTPS music.amazon regional URL, to the original mode-1 cookie refresh flow. Existing modes, other classes, non-Amazon destinations and all server authorization callbacks are unchanged. No successful authorization is fabricated and no dismissal is forced. On-device completion remains to be verified.
+
+Tests exercise stalled-to-cookie dispatch, existing cookie/nonce routes, nil/unsafe destinations, base/other subclasses and secret redaction.

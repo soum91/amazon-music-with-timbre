@@ -568,7 +568,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 @end
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 16";
+    [super viewDidLoad];self.title=@"Timbre 17";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -605,7 +605,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
     if(s==0){
         if(r==8){cell.textLabel.text=@"Reveal gallery for 30 seconds";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Temporary overlay test; restores automatically. Tap again to restore early.";cell.detailTextLabel.numberOfLines=0;}
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild16";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild17";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -632,7 +632,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
     NSInteger section=[self sourceSection:index.section];
     if(section==0&&index.row==8){NSString *result=tbRevealGallery();if(result){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Gallery visibility test" message:result preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];}else {UIViewController *presenter=tbEditorNavigation.presentingViewController;if(presenter)[presenter dismissViewControllerAnimated:YES completion:nil];else [self close];}return;}
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 16\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 17\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}

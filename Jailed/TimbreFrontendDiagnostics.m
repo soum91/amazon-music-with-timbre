@@ -95,7 +95,36 @@ static void watchWebDelegate(id delegate){
         }
     }
 }
+// The device-authorization subclass in 26.37.1 returns mode 0. The base
+// reload method handles only 1 (Amazon cookie refresh) and 2 (nonce request),
+// so mode 0 hides the web view and starts the spinner without loading anything.
+// Use Amazon's existing authenticated cookie flow for this exact controller.
+// Server authorization and its original completion/error callbacks remain intact.
+static void installDeviceAuthorizationLoadingFix(void){
+    Class cls=NSClassFromString(@"AMLicensedMusicDeviceAuthorizationViewController");
+    SEL selector=NSSelectorFromString(@"webViewAuth");Method method=class_getInstanceMethod(cls,selector);
+    NSString *key=@"DeviceAuthorization.cookieLoadingCompatibility";
+    if(installed(key)||!matches(method,"",'q'))return;
+    IMP original=method_getImplementation(method);
+    IMP replacement=imp_implementationWithBlock(^NSInteger(id object){
+        NSInteger mode=((NSInteger(*)(id,SEL))original)(object,selector);
+        if(mode!=0||[object class]!=cls)return mode;
+        SEL baseSelector=NSSelectorFromString(@"baseURL");
+        if(![object respondsToSelector:baseSelector])return mode;
+        id url=((id(*)(id,SEL))objc_msgSend)(object,baseSelector);
+        if(![url isKindOfClass:NSURL.class]||![[url scheme].lowercaseString isEqual:@"https"])return mode;
+        // Hosts and paths come from the app's bundled url_device_auth config.
+        NSArray *hosts=@[@"www.amazon.es",@"www.amazon.it",@"www.amazon.com",@"www.amazon.co.uk",@"www.amazon.co.jp",@"www.amazon.de",@"www.amazon.fr"];
+        BOOL standard=[hosts containsObject:[url host].lowercaseString]&&[[url path] isEqual:@"/gp/dmusic/device/manage/device_auth"];
+        BOOL regional=[[url host].lowercaseString isEqual:@"music.amazon.com"]&&[@[@"/FE/BMWV/device_auth",@"/EU/BMWV/device_auth",@"/NA/BMWV/device_auth"] containsObject:[url path]];
+        if(!standard&&!regional)return mode;
+        note(@"Device authorization loading compatibility: mode 0 -> Amazon cookie refresh. Server authorization unchanged.");
+        return (NSInteger)1;
+    });
+    class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));mark(key);
+}
 static void installNativePageHooks(void){
+    installDeviceAuthorizationLoadingFix();
     Class web=NSClassFromString(@"WKWebView");SEL sel=NSSelectorFromString(@"setNavigationDelegate:");Method m=class_getInstanceMethod(web,sel);NSString *key=@"WKWebView.setNavigationDelegate:";
     if(!installed(key)&&matches(m,"@",'v')){IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^(id object,id delegate){watchWebDelegate(delegate);((void(*)(id,SEL,id))original)(object,sel,delegate);});class_replaceMethod(web,sel,replacement,method_getTypeEncoding(m));mark(key);}
     sel=NSSelectorFromString(@"loadRequest:");m=class_getInstanceMethod(web,sel);key=@"WKWebView.loadRequest:";
@@ -219,7 +248,7 @@ void TBInspectAPIResponse(NSData *data,NSURLResponse *response) {
 }
 NSString *TBFrontendDiagnosticsText(void) {
     os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
-    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 16",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 17",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
     [out addObjectsFromArray:current?:@[@"No frontend events captured yet."]];
     if(!current.count){NSArray *previous=[NSUserDefaults.standardUserDefaults arrayForKey:@"Timbre.frontend.previous.v1"];if(previous.count){[out addObject:@"Saved events from an earlier launch (check timestamps):"];[out addObjectsFromArray:previous];}}
     [out addObject:@"Coverage: native navigation-ready/props acknowledgements, verified bridgeless RCTHost error callback, RCTInstance startup/load stages, bundle resolution, root-view creation, legacy exception methods and callback errors. C++ internals and errors handled entirely in JavaScript remain outside coverage. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];

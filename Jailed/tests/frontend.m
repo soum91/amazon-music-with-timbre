@@ -52,11 +52,44 @@ static int webRequests,webFinishes,webFailures;
 - (void)webView:(id)web didFinishNavigation:(id)navigation {NSCAssert([navigation isEqual:@"navigation-token"],@"Navigation altered");webFinishes++;}
 - (void)webView:(id)web didFailProvisionalNavigation:(id)navigation withError:(NSError *)error {NSCAssert(error.code==-1003,@"Error altered");webFailures++;}
 @end
+static int cookieLoads,nonceLoads;
+@interface AMLicensedMusicBaseViewController:NSObject
+@property(nonatomic) NSInteger originalMode;
+@property(nonatomic,strong) NSURL *destination;
+- (NSInteger)webViewAuth;
+- (NSURL *)baseURL;
+- (void)reloadWebView;
+- (void)startLoadingWebViewWithCookies;
+- (void)startLoadingWebViewWithNonce:(id)nonce;
+@end
+@implementation AMLicensedMusicBaseViewController
+- (NSInteger)webViewAuth{return self.originalMode;}
+- (NSURL *)baseURL{return self.destination;}
+- (void)reloadWebView{NSInteger mode=[self webViewAuth];if(mode==1)[self startLoadingWebViewWithCookies];else if(mode==2)[self startLoadingWebViewWithNonce:nil];}
+- (void)startLoadingWebViewWithCookies{cookieLoads++;}
+- (void)startLoadingWebViewWithNonce:(id)nonce{NSCAssert(!nonce,@"Unexpected nonce");nonceLoads++;}
+@end
+@interface AMLicensedMusicDeviceAuthorizationViewController:AMLicensedMusicBaseViewController @end
+@implementation AMLicensedMusicDeviceAuthorizationViewController
+- (NSInteger)webViewAuth{return self.originalMode;}
+@end
+@interface OtherDeviceAuthorization:AMLicensedMusicDeviceAuthorizationViewController @end
+@implementation OtherDeviceAuthorization @end
 int main(void){@autoreleasepool{
     Class notificationClass=objc_allocateClassPair(NSObject.class,"_TtC26AlcatrazReactNativeModules22NotificationModuleImpl",0);
     class_addMethod(notificationClass,NSSelectorFromString(@"navigationSystemReady"),(IMP)navReady,"v@:");
     class_addMethod(notificationClass,NSSelectorFromString(@"onPropsReceived:"),(IMP)propsReceived,"v@:@");objc_registerClassPair(notificationClass);
     TBInstallFrontendDiagnostics();
+    AMLicensedMusicDeviceAuthorizationViewController *auth=[AMLicensedMusicDeviceAuthorizationViewController new];
+    auth.destination=[NSURL URLWithString:@"https://www.amazon.com/gp/dmusic/device/manage/device_auth?token=NEVER_EXPORT"];
+    [auth reloadWebView];NSCAssert(cookieLoads==1&&nonceLoads==0,@"Stalled device auth did not reach cookie-loading flow");
+    auth.originalMode=2;[auth reloadWebView];NSCAssert(cookieLoads==1&&nonceLoads==1,@"Valid nonce mode was changed");
+    auth.originalMode=1;[auth reloadWebView];NSCAssert(cookieLoads==2,@"Valid cookie mode changed");
+    auth.originalMode=0;
+    for(NSString *url in @[@"https://www.amazon.com.evil.test/gp/dmusic/device/manage/device_auth",@"http://www.amazon.com/gp/dmusic/device/manage/device_auth",@"https://www.amazon.com/wrong-path"]){auth.destination=[NSURL URLWithString:url];NSCAssert([auth webViewAuth]==0,@"Unsupported destination modified");}
+    auth.destination=nil;NSCAssert([auth webViewAuth]==0,@"Missing destination modified");
+    OtherDeviceAuthorization *other=[OtherDeviceAuthorization new];other.destination=[NSURL URLWithString:@"https://www.amazon.com/gp/dmusic/device/manage/device_auth"];NSCAssert([other webViewAuth]==0,@"Other subclass modified");
+    AMLicensedMusicBaseViewController *base=[AMLicensedMusicBaseViewController new];base.destination=other.destination;NSCAssert([base webViewAuth]==0,@"Base controller modified");
     id notification=[notificationClass new];((void(*)(id,SEL))objc_msgSend)(notification,NSSelectorFromString(@"navigationSystemReady"));
     ((void(*)(id,SEL,id))objc_msgSend)(notification,NSSelectorFromString(@"onPropsReceived:"),@"NEVER_EXPORT");
     WKWebView *web=[WKWebView new];TestWebDelegate *webDelegate=[TestWebDelegate new];web.navigationDelegate=webDelegate;
