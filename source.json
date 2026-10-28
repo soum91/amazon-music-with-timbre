@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
+      "localizedDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412792",
+          "buildVersion": "26.37.1.412792",
+          "date": "2026-10-28",
+          "localizedDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
+          "size": 175310248,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412791",
           "buildVersion": "26.37.1.412791",
@@ -108,11 +117,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412791",
+      "version": "26.37.1.412792",
       "versionDate": "2026-10-28",
-      "versionDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412791/Amazon-Music-Timbre-Navigation-Fix-18.ipa",
-      "size": 175306000
+      "versionDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
+      "size": 175310248
     }
   ],
   "news": [],
