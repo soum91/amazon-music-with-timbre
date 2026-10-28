@@ -497,7 +497,7 @@ static NSString *headStatus(){
 @end
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 13";
+    [super viewDidLoad];self.title=@"Timbre 14";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -533,7 +533,7 @@ static NSString *headStatus(){
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild13";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild14";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -559,7 +559,7 @@ static NSString *headStatus(){
     [tableView deselectRowAtIndexPath:index animated:YES];
     NSInteger section=[self sourceSection:index.section];
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 13\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),TBPageDiagnosticsText()];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 14\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),TBPageDiagnosticsText()];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}

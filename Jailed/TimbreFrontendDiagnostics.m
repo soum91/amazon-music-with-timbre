@@ -52,8 +52,60 @@ static BOOL signature(Method m,const char *types) {
     char *ret=method_copyReturnType(m);BOOL ok=ret&&ret[0]=='v';free(ret);return ok;
 }
 static void mark(NSString *name){os_unfair_lock_lock(&frontLock);if(!hooks)hooks=[NSMutableSet set];[hooks addObject:name];os_unfair_lock_unlock(&frontLock);}
+
+static BOOL matches(Method method,const char *args,char result) {
+    if(!method||method_getNumberOfArguments(method)!=strlen(args)+2)return NO;
+    char *r=method_copyReturnType(method);BOOL ok=r&&r[0]==result;free(r);if(!ok)return NO;
+    for(unsigned i=0;i<strlen(args);i++){char *t=method_copyArgumentType(method,i+2);ok=t&&t[0]==args[i];free(t);if(!ok)return NO;}return YES;
+}
+static BOOL installed(NSString *key){os_unfair_lock_lock(&frontLock);BOOL done=[hooks containsObject:key];os_unfair_lock_unlock(&frontLock);return done;}
+static NSString *urlStatus(id value) {
+    if(![value isKindOfClass:NSURL.class])return @"bundle URL is nil or not an NSURL";
+    NSURL *url=value;
+    if(url.isFileURL){NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:url.path error:nil];return [NSString stringWithFormat:@"local %@ exists=%@ bytes=%@",clean(url.lastPathComponent,100),a?@"yes":@"no",a[NSFileSize]?:@0];}
+    return [NSString stringWithFormat:@"remote scheme=%@ host=%@ (path/query omitted)",clean(url.scheme,20),clean(url.host,120)];
+}
+static void startupSnapshot(id object,NSString *event) {
+    NSMutableArray *states=[NSMutableArray array];
+    // Read only actual Objective-C object ivars, never Swift struct/actor memory.
+    for(NSString *name in @[@"reactHostView",@"reactNativeViewManager",@"setupActor",@"_reactHostView",@"_reactHost",@"_rootViewFactory"]){
+        Ivar iv=class_getInstanceVariable([object class],name.UTF8String);const char *type=iv?ivar_getTypeEncoding(iv):NULL;
+        if(type&&type[0]=='@'){id value=object_getIvar(object,iv);[states addObject:[NSString stringWithFormat:@"%@=%@",name,value?NSStringFromClass([value class]):@"nil"]];}
+    }
+    note([NSString stringWithFormat:@"Startup %@ [%@] %@",event,NSStringFromClass([object class]),[states componentsJoinedByString:@", "]]);
+}
+static void installStartupHooks(void) {
+    NSArray *void0=@[@[@"RCTHost",@"start"],@[@"RCTInstance",@"_start"],@[@"RCTAppDelegate",@"initializeReactNativeSetup"],@[@"_TtC23AlcatrazReactNativeCore25ReactNativeViewController",@"viewDidLoad"]];
+    for(NSArray *spec in void0){Class cls=NSClassFromString(spec[0]);SEL sel=NSSelectorFromString(spec[1]);NSString *key=[spec componentsJoinedByString:@"."];Method m=class_getInstanceMethod(cls,sel);if(installed(key)||!matches(m,"",'v'))continue;IMP original=method_getImplementation(m);
+        IMP replacement=imp_implementationWithBlock(^(id object){startupSnapshot(object,[key stringByAppendingString:@" entered"]);((void(*)(id,SEL))original)(object,sel);startupSnapshot(object,[key stringByAppendingString:@" returned"]);});
+        class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(m));mark(key);
+    }
+    for(NSString *methodName in @[@"_loadJSBundle:",@"_loadScriptFromSource:",@"handleBundleLoadingError:"]){Class cls=NSClassFromString(@"RCTInstance");SEL sel=NSSelectorFromString(methodName);NSString *key=[@"RCTInstance." stringByAppendingString:methodName];Method m=class_getInstanceMethod(cls,sel);if(installed(key)||!matches(m,"@",'v'))continue;IMP original=method_getImplementation(m);
+        IMP replacement=imp_implementationWithBlock(^(id object,id arg){
+            if([methodName isEqual:@"handleBundleLoadingError:"]&&[arg isKindOfClass:NSError.class]){NSError *e=arg;exception(key,[NSString stringWithFormat:@"%@ %ld %@",e.domain,(long)e.code,e.localizedDescription],nil);}
+            else if([methodName isEqual:@"_loadJSBundle:"])note([NSString stringWithFormat:@"%@ %@",key,urlStatus(arg)]);
+            else note([key stringByAppendingString:@" reached (source bytes not recorded)"]);
+            ((void(*)(id,SEL,id))original)(object,sel,arg);
+        });class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(m));mark(key);
+    }
+    for(NSString *className in @[@"_TtC23AlcatrazReactNativeCore30AlcatrazReactNativeAppDelegate",@"RCTRootViewFactory"]){Class cls=NSClassFromString(className);SEL sel=NSSelectorFromString(@"bundleURL");NSString *key=[className stringByAppendingString:@".bundleURL"];Method m=class_getInstanceMethod(cls,sel);if(installed(key)||!matches(m,"",'@'))continue;IMP original=method_getImplementation(m);
+        IMP replacement=imp_implementationWithBlock(^id(id object){id result=((id(*)(id,SEL))original)(object,sel);note([NSString stringWithFormat:@"%@ %@",key,urlStatus(result)]);return result;});class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(m));mark(key);
+    }
+    Class factory=NSClassFromString(@"RCTRootViewFactory");SEL create=NSSelectorFromString(@"viewWithModuleName:initialProperties:launchOptions:");NSString *factoryKey=@"RCTRootViewFactory.viewWithModuleName:initialProperties:launchOptions:";Method cm=class_getInstanceMethod(factory,create);
+    if(!installed(factoryKey)&&matches(cm,"@@@",'@')){IMP original=method_getImplementation(cm);IMP replacement=imp_implementationWithBlock(^id(id object,id name,id props,id options){note(@"Root-view creation entered (props omitted)");id result=((id(*)(id,SEL,id,id,id))original)(object,create,name,props,options);note([NSString stringWithFormat:@"Root-view creation returned %@",result?NSStringFromClass([result class]):@"nil"]);return result;});class_replaceMethod(factory,create,replacement,method_getTypeEncoding(cm));mark(factoryKey);}
+    // Bridgeless errors are already marshalled into ObjC values at this boundary.
+    // Preserve the delegate's BOOL result and exact NSUInteger/BOOL ABI.
+    Class host=NSClassFromString(@"RCTHost");SEL errorSel=NSSelectorFromString(@"instance:didReceiveJSErrorStack:message:originalMessage:name:componentStack:exceptionId:isFatal:extraData:");NSString *errorKey=@"RCTHost.bridgelessJSError";Method em=class_getInstanceMethod(host,errorSel);
+    if(!installed(errorKey)&&matches(em,"@@@@@@QB@",'B')){IMP original=method_getImplementation(em);
+        IMP replacement=imp_implementationWithBlock(^BOOL(id object,id instance,id stack,id message,id originalMessage,id name,id componentStack,NSUInteger eid,BOOL fatal,id extra){
+            exception(fatal?@"Bridgeless fatal JS error":@"Bridgeless JS error",message,stack);
+            return ((BOOL(*)(id,SEL,id,id,id,id,id,id,NSUInteger,BOOL,id))original)(object,errorSel,instance,stack,message,originalMessage,name,componentStack,eid,fatal,extra);
+        });class_replaceMethod(host,errorSel,replacement,method_getTypeEncoding(em));mark(errorKey);
+    }
+}
 static void installHooks(void) {
     @synchronized(NSProcessInfo.class){
+        installStartupHooks();
         Class cls=NSClassFromString(@"RCTExceptionsManager");
         for(NSString *name in @[@"reportFatalException:stack:exceptionId:",@"reportSoftException:stack:exceptionId:",@"reportFatal:stack:exceptionId:extraDataAsJSON:",@"reportSoft:stack:exceptionId:extraDataAsJSON:"]){
             NSString *key=[@"RCTExceptionsManager." stringByAppendingString:name];
@@ -95,6 +147,7 @@ static void installHooks(void) {
 }
 void TBInstallFrontendDiagnostics(void) {
     NSNotificationCenter *n=NSNotificationCenter.defaultCenter;
+    [n addObserverForName:@"RCTInstanceDidLoadBundle" object:nil queue:nil usingBlock:^(NSNotification *notification){os_unfair_lock_lock(&frontLock);loads++;os_unfair_lock_unlock(&frontLock);note(@"Bridgeless RCTInstanceDidLoadBundle received");}];
     [n addObserverForName:@"RCTJavaScriptDidLoadNotification" object:nil queue:nil usingBlock:^(NSNotification *notification){os_unfair_lock_lock(&frontLock);loads++;os_unfair_lock_unlock(&frontLock);note(@"React Native JavaScript loaded");}];
     [n addObserverForName:@"RCTJavaScriptDidFailToLoadNotification" object:nil queue:nil usingBlock:^(NSNotification *notification){os_unfair_lock_lock(&frontLock);loadFailures++;os_unfair_lock_unlock(&frontLock);NSError *e=notification.userInfo[@"error"];exception(@"React Native bundle failed",[e isKindOfClass:NSError.class]?e.localizedDescription:@"No error description",[e isKindOfClass:NSError.class]?e.userInfo[@"RCTJSStackTraceKey"]:nil);}];
     installHooks();
@@ -129,9 +182,9 @@ void TBInspectAPIResponse(NSData *data,NSURLResponse *response) {
 }
 NSString *TBFrontendDiagnosticsText(void) {
     os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
-    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 13",[NSString stringWithFormat:@"JS loaded: %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 14",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
     [out addObjectsFromArray:current?:@[@"No frontend events captured yet."]];
     if(!current.count){NSArray *previous=[NSUserDefaults.standardUserDefaults arrayForKey:@"Timbre.frontend.previous.v1"];if(previous.count){[out addObject:@"Saved events from an earlier launch (check timestamps):"];[out addObjectsFromArray:previous];}}
-    [out addObject:@"Coverage: legacy RN exception methods and bridge callback errors. C++ reportException: is intentionally untouched; errors handled entirely in JavaScript can remain invisible. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];
+    [out addObject:@"Coverage: verified bridgeless RCTHost error callback, RCTInstance startup/load stages, bundle resolution, root-view creation, legacy exception methods and callback errors. C++ internals and errors handled entirely in JavaScript remain outside coverage. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];
     return [out componentsJoinedByString:@"\n"];
 }
