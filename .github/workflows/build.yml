@@ -27,6 +27,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O2 NativeDSP/TimbreDSP.cpp NativeDSP/tests/test.cpp -framework Accelerate -o /tmp/timbre-tests
           /tmp/timbre-tests
+      - name: Test frontend diagnostics
+        run: |
+          clang -fobjc-arc -fblocks Jailed/TimbreFrontendDiagnostics.m Jailed/tests/frontend.m -framework Foundation -o /tmp/frontend-tests
+          /tmp/frontend-tests
       - name: Build embedded iOS library
         run: |
           mkdir -p build
@@ -34,7 +38,8 @@ jobs:
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -c Jailed/fishhook.c -o build/fishhook.o
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbreEmbeddedUI.m -o build/embedded-ui.o
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbrePageDiagnostics.m -o build/page-diagnostics.o
-          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -DTIMBRE_BUILD_VERSION=\"$TIMBRE_BUILD_VERSION\" -DTIMBRE_SOURCE_SHA=\"$GITHUB_SHA\" -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o -framework UIKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbreFrontendDiagnostics.m -o build/frontend-diagnostics.o
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -DTIMBRE_BUILD_VERSION=\"$TIMBRE_BUILD_VERSION\" -DTIMBRE_SOURCE_SHA=\"$GITHUB_SHA\" -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o build/frontend-diagnostics.o -framework UIKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
           codesign --force --sign - build/TimbreNative-FlareStore.dylib
           codesign --verify --strict build/TimbreNative-FlareStore.dylib
           otool -L build/TimbreNative-FlareStore.dylib

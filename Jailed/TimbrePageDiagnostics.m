@@ -1,7 +1,10 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <os/lock.h>
-// Metadata only. No URLs beyond host, headers, bodies, cookies, tokens or account data.
+extern void TBInspectAPIResponse(NSData *,NSURLResponse *);
+extern NSString *TBFrontendDiagnosticsText(void);
+static char dataKey,oversizeKey;
+// No headers, credentials or raw response payloads are exported.
 static os_unfair_lock lock=OS_UNFAIR_LOCK_INIT;
 static NSMutableArray<NSString *> *eventOrder;
 static NSMutableDictionary<NSString *,NSNumber *> *eventCounts;
@@ -40,11 +43,11 @@ static void completed(NSURLResponse *response,NSError *error) {
 @implementation NSURLSession (TBPageDiagnostics)
 - (NSURLSessionDataTask *)tbpage_dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *,NSURLResponse *,NSError *))completion {
     if(!completion||!relevant(request.URL.host))return [self tbpage_dataTaskWithRequest:request completionHandler:completion];
-    return [self tbpage_dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){completed(response,error);completion(data,response,error);}];
+    return [self tbpage_dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){completed(response,error);if(!error)TBInspectAPIResponse(data,response);completion(data,response,error);}];
 }
 - (NSURLSessionDataTask *)tbpage_dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *,NSURLResponse *,NSError *))completion {
     if(!completion||!relevant(url.host))return [self tbpage_dataTaskWithURL:url completionHandler:completion];
-    return [self tbpage_dataTaskWithURL:url completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){completed(response,error);completion(data,response,error);}];
+    return [self tbpage_dataTaskWithURL:url completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){completed(response,error);if(!error)TBInspectAPIResponse(data,response);completion(data,response,error);}];
 }
 + (NSURLSession *)tbpage_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
     if(delegate){
@@ -57,9 +60,30 @@ static void completed(NSURLResponse *response,NSError *error) {
             Method m=class_getInstanceMethod(cls,sel);
             if(m&&![wrapped containsObject:key]){
                 IMP original=method_getImplementation(m);
-                IMP replacement=imp_implementationWithBlock(^(id object,NSURLSession *session,NSURLSessionTask *task,NSError *error){completed(task.response,error);((void(*)(id,SEL,NSURLSession *,NSURLSessionTask *,NSError *))original)(object,sel,session,task,error);});
+                IMP replacement=imp_implementationWithBlock(^(id object,NSURLSession *session,NSURLSessionTask *task,NSError *error){completed(task.response,error);
+                    NSData *body=nil;@synchronized(task){body=[objc_getAssociatedObject(task,&dataKey) copy];objc_setAssociatedObject(task,&dataKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+                    if(!error)TBInspectAPIResponse(body,task.response);
+                    ((void(*)(id,SEL,NSURLSession *,NSURLSessionTask *,NSError *))original)(object,sel,session,task,error);});
                 if(!class_addMethod(cls,sel,replacement,method_getTypeEncoding(m)))class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(m));
                 [wrapped addObject:key];
+            }
+            // Preserve optional protocol behavior: observe only callbacks that exist.
+            SEL dataSel=@selector(URLSession:dataTask:didReceiveData:);
+            Method dm=class_getInstanceMethod(cls,dataSel);NSString *dk=[key stringByAppendingString:@".data"];
+            if(dm&&m&&![wrapped containsObject:dk]){
+                IMP prior=method_getImplementation(dm);
+                IMP replacement=imp_implementationWithBlock(^(id object,NSURLSession *session,NSURLSessionDataTask *task,NSData *chunk){
+                    if(relevant(task.currentRequest.URL.host))@synchronized(task){
+                        if(!objc_getAssociatedObject(task,&oversizeKey)){
+                            NSMutableData *buffer=objc_getAssociatedObject(task,&dataKey);
+                            if(buffer.length+chunk.length<=1048576){if(!buffer){buffer=[NSMutableData data];objc_setAssociatedObject(task,&dataKey,buffer,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}[buffer appendData:chunk];}
+                            else {objc_setAssociatedObject(task,&dataKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);objc_setAssociatedObject(task,&oversizeKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+                        }
+                    }
+                    ((void(*)(id,SEL,NSURLSession *,NSURLSessionDataTask *,NSData *))prior)(object,dataSel,session,task,chunk);
+                });
+                if(!class_addMethod(cls,dataSel,replacement,method_getTypeEncoding(dm)))class_replaceMethod(cls,dataSel,replacement,method_getTypeEncoding(dm));
+                [wrapped addObject:dk];
             }
         }
     }
@@ -93,5 +117,6 @@ NSString *TBPageDiagnosticsText(void) {
     for(NSString *host in [[successHosts allKeys] sortedArrayUsingSelector:@selector(compare:)])[lines addObject:[NSString stringWithFormat:@"%@ · count %@",host,successHosts[host]]];
     [lines addObject:@"Coverage: URLSession completion handlers and implemented delegate completion callbacks. Other network stacks may not appear. HTTP success does not prove the response payload succeeded."];
     NSString *text=[lines componentsJoinedByString:@"\n"];
-    os_unfair_lock_unlock(&lock);return text;
+    os_unfair_lock_unlock(&lock);return [text stringByAppendingFormat:@"\n\n%@",TBFrontendDiagnosticsText()];
 }
+
