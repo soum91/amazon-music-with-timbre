@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <os/lock.h>
 #include <string.h>
 
@@ -74,6 +75,37 @@ static void startupSnapshot(id object,NSString *event) {
     }
     note([NSString stringWithFormat:@"Startup %@ [%@] %@",event,NSStringFromClass([object class]),[states componentsJoinedByString:@", "]]);
 }
+// WebKit callbacks have a separate process/network stack from URLSession.
+static NSString *webHost(id web){
+    if(![web respondsToSelector:NSSelectorFromString(@"URL")])return @"?";
+    id url=((id(*)(id,SEL))objc_msgSend)(web,NSSelectorFromString(@"URL"));
+    return [url isKindOfClass:NSURL.class]?[url host]?:@"(no host)":@"(no URL)";
+}
+static void watchWebDelegate(id delegate){
+    if(!delegate)return;
+    @synchronized(NSProcessInfo.class){
+        Class cls=[delegate class];
+        for(NSString *name in @[@"webView:didStartProvisionalNavigation:",@"webView:didCommitNavigation:",@"webView:didFinishNavigation:",@"webView:didFailProvisionalNavigation:withError:",@"webView:didFailNavigation:withError:"]){
+            SEL sel=NSSelectorFromString(name);NSString *key=[NSString stringWithFormat:@"WebDelegate.%@.%@",NSStringFromClass(cls),name];Method m=class_getInstanceMethod(cls,sel);BOOL failure=[name containsString:@"withError"];
+            if(installed(key)||!matches(m,failure?"@@@":"@@",'v'))continue;
+            IMP original=method_getImplementation(m),replacement;
+            if(failure)replacement=imp_implementationWithBlock(^(id object,id web,id navigation,NSError *error){note([NSString stringWithFormat:@"WebKit %@ owner=%@ host=%@ error=%@ %ld",name,NSStringFromClass([object class]),webHost(web),[error isKindOfClass:NSError.class]?error.domain:@"?",[error isKindOfClass:NSError.class]?(long)error.code:0L]);((void(*)(id,SEL,id,id,id))original)(object,sel,web,navigation,error);});
+            else replacement=imp_implementationWithBlock(^(id object,id web,id navigation){note([NSString stringWithFormat:@"WebKit %@ owner=%@ host=%@",name,NSStringFromClass([object class]),webHost(web)]);((void(*)(id,SEL,id,id))original)(object,sel,web,navigation);});
+            if(!class_addMethod(cls,sel,replacement,method_getTypeEncoding(m)))class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(m));mark(key);
+        }
+    }
+}
+static void installNativePageHooks(void){
+    Class web=NSClassFromString(@"WKWebView");SEL sel=NSSelectorFromString(@"setNavigationDelegate:");Method m=class_getInstanceMethod(web,sel);NSString *key=@"WKWebView.setNavigationDelegate:";
+    if(!installed(key)&&matches(m,"@",'v')){IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^(id object,id delegate){watchWebDelegate(delegate);((void(*)(id,SEL,id))original)(object,sel,delegate);});class_replaceMethod(web,sel,replacement,method_getTypeEncoding(m));mark(key);}
+    sel=NSSelectorFromString(@"loadRequest:");m=class_getInstanceMethod(web,sel);key=@"WKWebView.loadRequest:";
+    if(!installed(key)&&matches(m,"@",'@')){IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^id(id object,NSURLRequest *request){note([NSString stringWithFormat:@"WebKit loadRequest host=%@",[request isKindOfClass:NSURLRequest.class]?request.URL.host?:@"(no host)":@"(no request)"]);return ((id(*)(id,SEL,id))original)(object,sel,request);});class_replaceMethod(web,sel,replacement,method_getTypeEncoding(m));mark(key);}
+    Class owner=NSClassFromString(@"AMLicensedMusicBaseViewController");
+    for(NSString *name in @[@"webViewTimeOut",@"reloadWebView",@"startLoadingWebViewWithCookies"]){sel=NSSelectorFromString(name);m=class_getInstanceMethod(owner,sel);key=[@"LicensedMusic." stringByAppendingString:name];if(installed(key)||!matches(m,"",'v'))continue;IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^(id object){note([NSString stringWithFormat:@"Native page %@ owner=%@",name,NSStringFromClass([object class])]);((void(*)(id,SEL))original)(object,sel);});class_replaceMethod(owner,sel,replacement,method_getTypeEncoding(m));mark(key);}
+    sel=NSSelectorFromString(@"startLoadingWebViewWithNonce:");m=class_getInstanceMethod(owner,sel);key=@"LicensedMusic.startLoadingWebViewWithNonce:";
+    if(!installed(key)&&matches(m,"@",'v')){IMP original=method_getImplementation(m);IMP replacement=imp_implementationWithBlock(^(id object,id nonce){note([NSString stringWithFormat:@"Native page nonce callback owner=%@ value=%@ (contents omitted)",NSStringFromClass([object class]),nonce?@"present":@"nil"]);((void(*)(id,SEL,id))original)(object,sel,nonce);});class_replaceMethod(owner,sel,replacement,method_getTypeEncoding(m));mark(key);}
+}
+
 static void installStartupHooks(void) {
     NSArray *void0=@[@[@"_TtC26AlcatrazReactNativeModules22NotificationModuleImpl",@"navigationSystemReady"],@[@"RCTHost",@"start"],@[@"RCTInstance",@"_start"],@[@"RCTAppDelegate",@"initializeReactNativeSetup"],@[@"_TtC23AlcatrazReactNativeCore25ReactNativeViewController",@"viewDidLoad"]];
     for(NSArray *spec in void0){Class cls=NSClassFromString(spec[0]);SEL sel=NSSelectorFromString(spec[1]);NSString *key=[spec componentsJoinedByString:@"."];Method m=class_getInstanceMethod(cls,sel);if(installed(key)||!matches(m,"",'v'))continue;IMP original=method_getImplementation(m);
@@ -110,6 +142,7 @@ static void installStartupHooks(void) {
 static void installHooks(void) {
     @synchronized(NSProcessInfo.class){
         installStartupHooks();
+        installNativePageHooks();
         Class cls=NSClassFromString(@"RCTExceptionsManager");
         for(NSString *name in @[@"reportFatalException:stack:exceptionId:",@"reportSoftException:stack:exceptionId:",@"reportFatal:stack:exceptionId:extraDataAsJSON:",@"reportSoft:stack:exceptionId:extraDataAsJSON:"]){
             NSString *key=[@"RCTExceptionsManager." stringByAppendingString:name];
@@ -186,9 +219,11 @@ void TBInspectAPIResponse(NSData *data,NSURLResponse *response) {
 }
 NSString *TBFrontendDiagnosticsText(void) {
     os_unfair_lock_lock(&frontLock);NSArray *current=[events copy],*installed=[[hooks allObjects] sortedArrayUsingSelector:@selector(compare:)];NSUInteger l=loads,f=loadFailures,c=callbackErrors,j=jsonResponses;os_unfair_lock_unlock(&frontLock);
-    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 15",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:@"Frontend diagnostics 16",[NSString stringWithFormat:@"JS load notifications (legacy + bridgeless): %lu · load failures: %lu · native callback errors: %lu · JSON dictionaries inspected: %lu",(unsigned long)l,(unsigned long)f,(unsigned long)c,(unsigned long)j],@"Installed hooks:",[installed componentsJoinedByString:@"\n"]?:@"",@"This launch:",nil];
     [out addObjectsFromArray:current?:@[@"No frontend events captured yet."]];
     if(!current.count){NSArray *previous=[NSUserDefaults.standardUserDefaults arrayForKey:@"Timbre.frontend.previous.v1"];if(previous.count){[out addObject:@"Saved events from an earlier launch (check timestamps):"];[out addObjectsFromArray:previous];}}
     [out addObject:@"Coverage: native navigation-ready/props acknowledgements, verified bridgeless RCTHost error callback, RCTInstance startup/load stages, bundle resolution, root-view creation, legacy exception methods and callback errors. C++ internals and errors handled entirely in JavaScript remain outside coverage. JSON inspection covers buffered URLSession completion handlers and implemented data delegate callbacks, up to 1 MiB per response."];
     return [out componentsJoinedByString:@"\n"];
 }
+
+void TBRecordNativePageEvent(NSString *event){note(event);}

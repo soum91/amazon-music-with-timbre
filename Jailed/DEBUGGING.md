@@ -55,3 +55,26 @@ snapshots before the Timbre sheet opens. Class/frame/hidden/alpha/opaque and
 spinner state only; no labels or identifiers. Frontmost siblings are visited
 first with a 220-node/14-depth limit so overlays appear before large content
 trees. This diagnoses visibility rather than forcibly removing loading views.
+
+Build 15: native navigationSystemReady callback ran. No props acknowledgement
+was captured; that alone is not evidence of failure for a native page. Snapshot
+shows an Amazon activity indicator visible, WKWebView hidden, and a native
+AlcatrazCurate gallery with widgets in the same screen hierarchy. Audible and
+Podcasts reportedly work; music Explore fails.
+
+Static AMLicensedMusicBaseViewController webView:didFinishNavigation: at
+0x1000d9240 calls loadingSpinner.stopAnimating then webView.setHidden:NO.
+The request path includes startLoadingWebViewWithNonce: and cookies. This is
+a candidate controller path, not yet proven to own the failing page.
+
+Build 16 records WebKit delegate completion/failure and native nonce-callback
+presence, and adds WK URL host/loading/progress/navigationDelegate/owning
+controller to view snapshots. No URL paths, cookies, nonce values or request
+headers are exported.
+
+The optional 'Reveal gallery for 30 seconds' action is an explicit reversible
+visibility probe. Requires a visible native gallery/widget and a later sibling
+covering at least 70% of its common parent, containing a hidden WKWebView and a
+visible Amazon spinner. It hides only that sibling, restores after 30 seconds
+or an early second tap, records the override, and never sends auth/navigation
+callbacks. This is not a functional fix and may expose placeholder content.

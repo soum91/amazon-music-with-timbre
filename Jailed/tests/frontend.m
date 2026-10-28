@@ -35,6 +35,23 @@ static int hostStarts,instanceLoads;
 static int navigationCalls,propsCalls;
 static void navReady(id self,SEL cmd){navigationCalls++;}
 static void propsReceived(id self,SEL cmd,id value){NSCAssert([value isEqual:@"NEVER_EXPORT"],@"Props identifier altered");propsCalls++;}
+static int webRequests,webFinishes,webFailures;
+@interface WKWebView:NSObject
+@property(nonatomic,strong) NSURL *URL;
+@property(nonatomic,strong) id navigationDelegate;
+- (id)loadRequest:(NSURLRequest *)request;
+@end
+@implementation WKWebView
+- (id)loadRequest:(NSURLRequest *)request {self.URL=request.URL;webRequests++;return @"navigation-token";}
+@end
+@interface TestWebDelegate:NSObject
+- (void)webView:(id)web didFinishNavigation:(id)navigation;
+- (void)webView:(id)web didFailProvisionalNavigation:(id)navigation withError:(NSError *)error;
+@end
+@implementation TestWebDelegate
+- (void)webView:(id)web didFinishNavigation:(id)navigation {NSCAssert([navigation isEqual:@"navigation-token"],@"Navigation altered");webFinishes++;}
+- (void)webView:(id)web didFailProvisionalNavigation:(id)navigation withError:(NSError *)error {NSCAssert(error.code==-1003,@"Error altered");webFailures++;}
+@end
 int main(void){@autoreleasepool{
     Class notificationClass=objc_allocateClassPair(NSObject.class,"_TtC26AlcatrazReactNativeModules22NotificationModuleImpl",0);
     class_addMethod(notificationClass,NSSelectorFromString(@"navigationSystemReady"),(IMP)navReady,"v@:");
@@ -42,6 +59,10 @@ int main(void){@autoreleasepool{
     TBInstallFrontendDiagnostics();
     id notification=[notificationClass new];((void(*)(id,SEL))objc_msgSend)(notification,NSSelectorFromString(@"navigationSystemReady"));
     ((void(*)(id,SEL,id))objc_msgSend)(notification,NSSelectorFromString(@"onPropsReceived:"),@"NEVER_EXPORT");
+    WKWebView *web=[WKWebView new];TestWebDelegate *webDelegate=[TestWebDelegate new];web.navigationDelegate=webDelegate;
+    id navigation=[web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://music.amazon.com/private?token=NEVER_EXPORT"]]];
+    [webDelegate webView:web didFinishNavigation:navigation];
+    [webDelegate webView:web didFailProvisionalNavigation:navigation withError:[NSError errorWithDomain:NSURLErrorDomain code:-1003 userInfo:@{NSLocalizedDescriptionKey:@"NEVER_EXPORT"}]];
     RCTHost *host=[RCTHost new];[host start];
     BOOL handled=[host instance:nil didReceiveJSErrorStack:@[@{@"methodName":@"renderBridgelessHome",@"file":@"main.jsbundle",@"lineNumber":@81,@"column":@9}] message:@"Bridgeless test exception" originalMessage:@"NEVER_EXPORT" name:@"TypeError" componentStack:@"NEVER_EXPORT" exceptionId:123456789 isFatal:YES extraData:@"NEVER_EXPORT"];
     NSCAssert(handled&&hostStarts==1,@"Host forwarding/return changed");
@@ -53,6 +74,7 @@ int main(void){@autoreleasepool{
     NSURLResponse *response=[[NSURLResponse alloc] initWithURL:[NSURL URLWithString:@"https://music.amazon.com/private?token=NEVER_EXPORT"] MIMEType:@"application/json" expectedContentLength:0 textEncodingName:@"utf-8"];
     NSData *body=[NSJSONSerialization dataWithJSONObject:@{@"errors":@[@{@"message":@"NEVER_EXPORT",@"extensions":@{@"code":@"UNAUTHORIZED"}}],@"token":@"NEVER_EXPORT"} options:0 error:nil];TBInspectAPIResponse(body,response);
     NSString *text=TBFrontendDiagnosticsText();
+    NSCAssert(webRequests==1&&webFinishes==1&&webFailures==1&&[text containsString:@"WebKit loadRequest host=music.amazon.com"]&&[text containsString:@"NSURLErrorDomain -1003"],@"WebKit capture/forwarding failed");
     NSCAssert(navigationCalls==1&&propsCalls==1&&[text containsString:@"navigationSystemReady entered"]&&[text containsString:@"Page props acknowledged"],@"Navigation handoff capture or forwarding failed");
     NSCAssert(instanceLoads==1&&[text containsString:@"renderBridgelessHome"]&&[text containsString:@"exists=no"]&&[text containsString:@"Bridgeless RCTInstanceDidLoadBundle received"],@"Bridgeless lifecycle/error capture missing");
     NSCAssert(fatalCalls==1&&callbackCalls==1,@"Original callbacks not preserved");

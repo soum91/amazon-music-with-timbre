@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
 #ifndef TIMBRE_BUILD_VERSION
 #define TIMBRE_BUILD_VERSION "development"
 #endif
@@ -8,6 +9,7 @@
 
 #import "TimbreEmbeddedUI.h"
 extern "C" void TBInstallPageDiagnostics(void);
+extern "C" void TBRecordNativePageEvent(NSString *);
 extern "C" void TBInstallFrontendDiagnostics(void);
 extern "C" NSString *TBPageDiagnosticsText(void);
 #import <AVFoundation/AVFoundation.h>
@@ -492,10 +494,49 @@ static NSString *headStatus(){
 
 // Main-thread metadata snapshots only: no labels, user text, screenshots or IDs.
 static NSMutableArray<NSString *> *tbViewSnapshots;
+static __weak UINavigationController *tbEditorNavigation;
+static __weak UIView *tbRevealedLoadingContainer;
+static NSUInteger tbRevealGeneration;
+static UIView *tbFindView(UIView *root,BOOL (^predicate)(UIView *),BOOL visibleOnly){
+    if(visibleOnly&&(root.hidden||root.alpha<0.01))return nil;
+    if(predicate(root))return root;
+    for(UIView *child in root.subviews){UIView *v=tbFindView(child,predicate,visibleOnly);if(v)return v;}
+    return nil;
+}
+static NSString *tbRevealGallery(void){
+    if(tbRevealedLoadingContainer){tbRevealedLoadingContainer.hidden=NO;tbRevealedLoadingContainer=nil;tbRevealGeneration++;TBRecordNativePageEvent(@"Gallery reveal restored manually");return @"Restored the loading container.";}
+    UIView *gallery=nil;
+    for(UIScene *scene in UIApplication.sharedApplication.connectedScenes){if(![scene isKindOfClass:UIWindowScene.class]||scene.activationState!=UISceneActivationStateForegroundActive)continue;
+        for(UIWindow *w in ((UIWindowScene *)scene).windows){if(w.hidden||w.windowLevel!=UIWindowLevelNormal)continue;gallery=tbFindView(w,^BOOL(UIView *v){return [NSStringFromClass(v.class) isEqual:@"AlcatrazCurate.GalleryTemplateView"];},YES);if(gallery)break;}
+        if(gallery)break;
+    }
+    if(!gallery)return @"No visible native gallery found. Nothing was changed.";
+    UIView *widget=tbFindView(gallery,^BOOL(UIView *v){return [NSStringFromClass(v.class) hasSuffix:@"WidgetView"];},YES);
+    if(!widget)return @"The gallery has no visible widget views. Nothing was changed.";
+    UIView *branch=gallery;
+    for(UIView *parent=gallery.superview;parent&&![parent isKindOfClass:UIWindow.class];branch=parent,parent=parent.superview){
+        NSUInteger branchIndex=[parent.subviews indexOfObjectIdenticalTo:branch];
+        for(NSUInteger i=branchIndex+1;i<parent.subviews.count;i++){
+            UIView *candidate=parent.subviews[i];if(candidate.hidden||candidate.alpha<0.01)continue;
+            if(candidate.bounds.size.width<parent.bounds.size.width*0.7||candidate.bounds.size.height<parent.bounds.size.height*0.7)continue;
+            UIView *web=tbFindView(candidate,^BOOL(UIView *v){return [v isKindOfClass:WKWebView.class];},NO);
+            UIView *spinner=tbFindView(candidate,^BOOL(UIView *v){return [NSStringFromClass(v.class) isEqual:@"CloudPlayer.AMActivityIndicatorView"];},YES);
+            if(!web||!web.hidden||!spinner)continue;
+            // Diagnostic only. Restore automatically and never invoke auth/navigation callbacks.
+            tbRevealedLoadingContainer=candidate;NSUInteger generation=++tbRevealGeneration;candidate.hidden=YES;
+            TBRecordNativePageEvent(@"Temporary gallery reveal applied: hid covering sibling containing hidden WKWebView + visible Amazon spinner. No authentication or navigation state changed.");
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(generation!=tbRevealGeneration)return;UIView *view=tbRevealedLoadingContainer;if(view){view.hidden=NO;tbRevealedLoadingContainer=nil;TBRecordNativePageEvent(@"Temporary gallery reveal restored after 30 seconds");}});
+            return nil;
+        }
+    }
+    return @"No matching loading container above the gallery was found. Nothing was changed.";
+}
+
 static void tbDescribeView(UIView *view,NSMutableArray *lines,int depth,int *budget){
     if((*budget)--<=0||depth>14)return;
     NSString *kind=NSStringFromClass(view.class);
     NSString *spin=[view isKindOfClass:UIActivityIndicatorView.class]?([((UIActivityIndicatorView *)view) isAnimating]?@" spinner=running":@" spinner=stopped"):@"";
+    if([view isKindOfClass:WKWebView.class]){WKWebView *web=(WKWebView *)view;UIResponder *r=web;for(int i=0;i<32&&r&&![r isKindOfClass:UIViewController.class];i++)r=r.nextResponder;spin=[NSString stringWithFormat:@" WebKit loading=%d progress=%.3f URL=%@ host=%@ delegate=%@ owner=%@",web.loading,web.estimatedProgress,web.URL?@"present":@"nil",web.URL.host?:@"(none)",web.navigationDelegate?NSStringFromClass([web.navigationDelegate class]):@"nil",r?NSStringFromClass(r.class):@"unknown"];}
     [lines addObject:[NSString stringWithFormat:@"%*s%@ frame=%@ hidden=%d alpha=%.2f opaque=%d%@",depth*2,"",kind,NSStringFromCGRect(view.frame),view.hidden,view.alpha,view.opaque,spin]];
     if(view.hidden||view.alpha<0.01)return;
     // Visit frontmost siblings first so a large content tree cannot hide an overlay from the budget.
@@ -527,7 +568,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 @end
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 15";
+    [super viewDidLoad];self.title=@"Timbre 16";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -550,7 +591,7 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?8:section==1?2:section==2?settings.count.load()+1:9;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?9:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
@@ -562,8 +603,9 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)index {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];NSInteger s=[self sourceSection:index.section],r=index.row;
     if(s==0){
+        if(r==8){cell.textLabel.text=@"Reveal gallery for 30 seconds";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Temporary overlay test; restores automatically. Tap again to restore early.";cell.detailTextLabel.numberOfLines=0;}
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild15";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild16";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -588,8 +630,9 @@ static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)index {
     [tableView deselectRowAtIndexPath:index animated:YES];
     NSInteger section=[self sourceSection:index.section];
+    if(section==0&&index.row==8){NSString *result=tbRevealGallery();if(result){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Gallery visibility test" message:result preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];}else {UIViewController *presenter=tbEditorNavigation.presentingViewController;if(presenter)[presenter dismissViewControllerAnimated:YES completion:nil];else [self close];}return;}
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 15\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 16\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,tbKeyStatus(),[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}
@@ -811,7 +854,7 @@ static UIWindow *TBNativeWindow(void) {
     }
     [window bringSubviewToFront:self.button];
 }
-- (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;UIViewController *controller=TBCreateEmbeddedController();UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
+- (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;UIViewController *controller=TBCreateEmbeddedController();UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;tbEditorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
 @end
 
 __attribute__((constructor)) static void launchTimbreNative() {
