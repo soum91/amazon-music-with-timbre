@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
+      "localizedDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412785",
+          "buildVersion": "26.37.1.412785",
+          "date": "2026-10-27",
+          "localizedDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412785/Amazon-Music-Timbre-Frontend-Debug-13.ipa",
+          "size": 175289442,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412784",
           "buildVersion": "26.37.1.412784",
@@ -54,11 +63,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412784",
+      "version": "26.37.1.412785",
       "versionDate": "2026-10-27",
-      "versionDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412784/Amazon-Music-Timbre-Bottom-Right-12.ipa",
-      "size": 175281922
+      "versionDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412785/Amazon-Music-Timbre-Frontend-Debug-13.ipa",
+      "size": 175289442
     }
   ],
   "news": [],
