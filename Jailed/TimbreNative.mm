@@ -515,7 +515,7 @@ static void tbCaptureViewHierarchy(void){
     }
     if(!lines.count)return;
     if(!tbViewSnapshots)tbViewSnapshots=[NSMutableArray array];
-    NSString *snapshot=[NSString stringWithFormat:@"%@\n%@",[NSISO8601DateFormatter.new stringFromDate:NSDate.date],[lines componentsJoinedByString:@"\n"]];
+    NSString *snapshot=[NSString stringWithFormat:@"%@\n%@",[[NSISO8601DateFormatter new] stringFromDate:[NSDate date]],[lines componentsJoinedByString:@"\n"]];
     if(tbViewSnapshots.count>=4)[tbViewSnapshots removeObjectAtIndex:0];[tbViewSnapshots addObject:snapshot];
 }
 static NSString *tbViewHierarchyReport(void){return [NSString stringWithFormat:@"View hierarchy before Timbre opened (last four 1-second snapshots; siblings listed front to back; no view text)\n%@",[tbViewSnapshots componentsJoinedByString:@"\n\n"]?:@"No active-app snapshot captured yet."];}
