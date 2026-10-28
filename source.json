@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
+      "localizedDescription": "GUI 14: verified bridgeless React Native host/error callback, bundle resolution/loading, root-view startup and shareable report. Diagnostic and DSP tests passed; device verification pending. Home/Profile are not confirmed fixed.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1.412786",
+          "buildVersion": "26.37.1.412786",
+          "date": "2026-10-27",
+          "localizedDescription": "GUI 14: verified bridgeless React Native host/error callback, bundle resolution/loading, root-view startup and shareable report. Diagnostic and DSP tests passed; device verification pending. Home/Profile are not confirmed fixed.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412786/Amazon-Music-Timbre-Bridgeless-Debug-14.ipa",
+          "size": 175293969,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1.412785",
           "buildVersion": "26.37.1.412785",
@@ -63,11 +72,11 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412785",
+      "version": "26.37.1.412786",
       "versionDate": "2026-10-27",
-      "versionDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412785/Amazon-Music-Timbre-Frontend-Debug-13.ipa",
-      "size": 175289442
+      "versionDescription": "GUI 14: verified bridgeless React Native host/error callback, bundle resolution/loading, root-view startup and shareable report. Diagnostic and DSP tests passed; device verification pending. Home/Profile are not confirmed fixed.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412786/Amazon-Music-Timbre-Bridgeless-Debug-14.ipa",
+      "size": 175293969
     }
   ],
   "news": [],
