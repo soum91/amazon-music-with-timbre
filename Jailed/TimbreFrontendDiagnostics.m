@@ -112,6 +112,21 @@ static BOOL bundledAmazonURL(NSURL *url){
     for(NSString *domain in bundledAmazonDomains())if([host hasSuffix:domain])return YES;
     return NO;
 }
+// am.app.link and am-alternate.app.link are Amazon's own Branch universal-link
+// hosts, declared in the original app's applinks: entitlements. The App Store
+// build lets iOS claim them natively, so the device-authorization redirect
+// chain never loads them in the web view. A resigned IPA has no live
+// associated-domains entitlement, so that handoff leaks into WKWebView and the
+// base trusted-domain check correctly rejects a non-amazon.com host, stalling
+// authorization before Home/Profile. Allow only these exact Amazon hosts, under
+// the same scope as the bundled-domain fallback, so the link's server redirect
+// back to music.amazon.com can resolve. Exact host match only: app.link is
+// Branch's shared domain across all of its customers, never suffix-matched.
+static BOOL amazonAuthAppLinkURL(NSURL *url){
+    if(![url isKindOfClass:NSURL.class]||![url.scheme.lowercaseString isEqual:@"https"]||url.user.length||url.password.length||(url.port&&url.port.integerValue!=443))return NO;
+    NSString *host=url.host.lowercaseString;if(!host.length)return NO;
+    return [host isEqual:@"am.app.link"]||[host isEqual:@"am-alternate.app.link"];
+}
 static void installAuthDomainCompatibility(void){
     SEL selector=NSSelectorFromString(@"isTrustedDomain");Method method=class_getInstanceMethod(NSURL.class,selector);
     NSString *key=@"DeviceAuthorization.bundledDomainCompatibility";
@@ -119,11 +134,14 @@ static void installAuthDomainCompatibility(void){
     IMP original=method_getImplementation(method);
     IMP replacement=imp_implementationWithBlock(^BOOL(NSURL *url){
         BOOL trusted=((BOOL(*)(id,SEL))original)(url,selector);
-        if(tbAuthNavigationURL&&[url isEqual:(__bridge NSURL *)tbAuthNavigationURL])policyNote([NSString stringWithFormat:@"Trust host=%@ scheme=%@ original=%d bundledMatch=%d",url.host?:@"nil",url.scheme?:@"nil",trusted,bundledAmazonURL(url)]);
+        if(tbAuthNavigationURL&&[url isEqual:(__bridge NSURL *)tbAuthNavigationURL])policyNote([NSString stringWithFormat:@"Trust host=%@ scheme=%@ original=%d bundledMatch=%d appLinkMatch=%d",url.host?:@"nil",url.scheme?:@"nil",trusted,bundledAmazonURL(url),amazonAuthAppLinkURL(url)]);
         if(trusted)return trusted;
         NSURL *navigationURL=(__bridge NSURL *)tbAuthNavigationURL;
         if(navigationURL&&[url isEqual:navigationURL]&&bundledAmazonURL(url)){
             note([NSString stringWithFormat:@"Device authorization: restored bundled HTTPS host policy for %@",url.host.lowercaseString]);return YES;
+        }
+        if(navigationURL&&[url isEqual:navigationURL]&&amazonAuthAppLinkURL(url)){
+            note([NSString stringWithFormat:@"Device authorization: allowed Amazon app-link redirect host %@",url.host.lowercaseString]);return YES;
         }return trusted;
     });
     class_replaceMethod(NSURL.class,selector,replacement,method_getTypeEncoding(method));mark(key);

@@ -111,8 +111,8 @@ int main(void){@autoreleasepool{
     AMLicensedMusicBaseViewController *base=[AMLicensedMusicBaseViewController new];base.destination=other.destination;NSCAssert([base webViewAuth]==0,@"Base controller modified");
     WKWebView *authWeb=[WKWebView new];authWeb.navigationDelegate=auth;
     TestNavigationAction *action=[TestNavigationAction new];
-    NSArray *allowed=@[@"https://music.amazon.com/NA/BMWV/device_auth?token=NEVER_EXPORT",@"https://www.amazon.ca/ap/signin",@"https://www.amazon.com/done",@"https://already-trusted.test/"];
-    NSArray *denied=@[@"http://music.amazon.com/",@"https://music.amazon.com.evil.test/",@"https://evilamazon.com/",@"https://user:NEVER_EXPORT@music.amazon.com/",@"https://music.amazon.com:444/",@"https://www.evil.test/"];
+    NSArray *allowed=@[@"https://music.amazon.com/NA/BMWV/device_auth?token=NEVER_EXPORT",@"https://www.amazon.ca/ap/signin",@"https://www.amazon.com/done",@"https://already-trusted.test/",@"https://am.app.link/device_auth_redirect",@"https://am-alternate.app.link/device_auth_redirect"];
+    NSArray *denied=@[@"http://music.amazon.com/",@"https://music.amazon.com.evil.test/",@"https://evilamazon.com/",@"https://user:NEVER_EXPORT@music.amazon.com/",@"https://music.amazon.com:444/",@"https://www.evil.test/",@"https://am.app.link.evil.test/",@"https://evil.app.link/",@"http://am.app.link/",@"https://user:NEVER_EXPORT@am.app.link/",@"https://am.app.link:444/",@"https://notam.app.link/"];
     for(NSString *destination in [allowed arrayByAddingObjectsFromArray:denied]){
         action.request=[NSURLRequest requestWithURL:[NSURL URLWithString:destination]];
         __block int decisions=0;__block NSInteger policy=-1;

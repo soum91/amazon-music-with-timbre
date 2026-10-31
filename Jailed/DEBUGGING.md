@@ -100,3 +100,13 @@ Adds signed little-endian PCM 24-bit packed/24-in-32 and 32-bit integer conversi
 Diagnostics now show observed DSP format separately from actual AVAudioSession rate, preferred rate and output port type/channel count. Source codec/bit depth and endpoint DAC depth remain explicitly unverified. A user-triggered 48 kHz preference calls setPreferredSampleRate without forcing session activation, replacing Amazon's decoder, or selecting a Bluetooth codec. No lossless AirPods or Atmos reconstruction is claimed.
 
 Home remains unresolved in GUI 18. GUI 19 retains a separate bounded navigation decision/trust buffer so reload spam cannot erase the policy result; URL query strings, credentials and port names are omitted. No further auth behavior change is made.
+
+## GUI 20: Amazon app-link redirect in device authorization
+
+GUI 19 policy buffer shows the music.amazon.com leg now commits (policy=1), then the device-authorization flow navigates to am.app.link, which is rejected: original=0 bundledMatch=0 policy=0. WKWebView stays hidden with URL=nil behind a visible spinner, so authorization never completes and Home/Profile/Explore, which gate on it, never load. Audible and Podcasts do not gate on it.
+
+am.app.link and am-alternate.app.link are Amazon's Branch universal-link hosts, declared in the original app's applinks: entitlements. The App Store build lets iOS claim them, so the redirect never reaches the web view. A resigned IPA has no working associated-domains entitlement, so the link loads inside WKWebView and fails the trusted-domain check.
+
+GUI 20 allows only those two exact hosts, under the same scope as the GUI 18 fallback: this controller's synchronous navigation decision, the URL being checked, HTTPS, no credentials, default/443 port. Exact host match only, because app.link is Branch's shared domain. The policy note now records appLinkMatch. Tests allow both hosts and reject am.app.link.evil.test, evil.app.link, notam.app.link, insecure scheme, credentials and port 444, and confirm trust does not leak outside the scoped decision.
+
+Expected next report: am.app.link policy=1, followed by a music.amazon.com navigation and WebKit didFinishNavigation for the device-authorization controller. If am.app.link instead serves an open-in-app page without redirecting, the next step is to cancel that navigation and pass the URL to the app's own universal-link handler. On-device verification is still required.
