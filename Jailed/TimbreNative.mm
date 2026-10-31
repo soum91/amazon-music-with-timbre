@@ -583,7 +583,7 @@ static NSString *tbAudioFormatReport(void){
 }
 @implementation TBNativeController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"Timbre 19";
+    [super viewDidLoad];self.title=@"Timbre 21";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Presets" style:UIBarButtonItemStylePlain target:self action:@selector(presets)];
     self.view.tintColor=UIColor.systemIndigoColor;
@@ -622,7 +622,7 @@ static NSString *tbAudioFormatReport(void){
         if(r==10){cell.textLabel.text=@"Request 48 kHz session rate";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Optional preference; iOS chooses the actual rate. Does not change source quality or Bluetooth codec.";cell.detailTextLabel.numberOfLines=0;}
         if(r==8){cell.textLabel.text=@"Reveal gallery for 30 seconds";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Temporary overlay test; restores automatically. Tap again to restore early.";cell.detailTextLabel.numberOfLines=0;}
         if(r==7){cell.textLabel.text=@"Share debug report";cell.textLabel.textColor=UIColor.systemIndigoColor;cell.detailTextLabel.text=@"Export frontend exceptions, API error codes and build details";}
-        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild19";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
+        if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild21";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
@@ -650,7 +650,7 @@ static NSString *tbAudioFormatReport(void){
     if(section==0&&index.row==10){NSError *error=nil;BOOL ok=[AVAudioSession.sharedInstance setPreferredSampleRate:48000 error:&error];tbRateRequestStatus=ok?@"Timbre requested 48 kHz; check the actual session rate above.":[NSString stringWithFormat:@"48 kHz request failed: %@ %ld",error.domain?:@"unknown",(long)error.code];[self.tableView reloadData];return;}
     if(section==0&&index.row==8){NSString *result=tbRevealGallery();if(result){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Gallery visibility test" message:result preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];}else {UIViewController *presenter=tbEditorNavigation.presentingViewController;if(presenter)[presenter dismissViewControllerAnimated:YES completion:nil];else [self close];}return;}
     if(section==0&&index.row==7){
-        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 19\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[tbKeyStatus() stringByAppendingFormat:@"\n\n%@",tbAudioFormatReport()],[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
+        NSString *report=[NSString stringWithFormat:@"Timbre diagnostics 21\nBuild: %s\nSource: %s\n%@\n\n%@",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[tbKeyStatus() stringByAppendingFormat:@"\n\n%@",tbAudioFormatReport()],[TBPageDiagnosticsText() stringByAppendingFormat:@"\n\n%@",tbViewHierarchyReport()]];
         NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"timbre-debug.txt"]];
         NSError *error=nil;[report writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:&error];
         if(error){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not export report" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];return;}
