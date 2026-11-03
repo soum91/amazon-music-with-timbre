@@ -24,7 +24,7 @@ def update(ipa, url, destination, repository):
     raw = f"https://raw.githubusercontent.com/{repository}/main"
     target = Path(destination)
     feed = json.loads(target.read_text()) if target.exists() else {}
-    date = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    date = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     description = "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation."
     version = {"version": marketing_version, "buildVersion": build, "date": date,
                "localizedDescription": description, "downloadURL": url,

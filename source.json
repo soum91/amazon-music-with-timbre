@@ -20,7 +20,7 @@
         {
           "version": "26.37.1",
           "buildVersion": "26.37.1.412792",
-          "date": "2026-10-28",
+          "date": "2026-10-28T15:34:45Z",
           "localizedDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
           "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
           "size": 175310248,
@@ -118,7 +118,7 @@
         }
       ],
       "version": "26.37.1",
-      "versionDate": "2026-10-28",
+      "versionDate": "2026-10-28T15:34:45Z",
       "versionDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
       "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
       "size": 175310248,
