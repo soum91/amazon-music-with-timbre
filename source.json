@@ -18,7 +18,7 @@
       "category": "music",
       "versions": [
         {
-          "version": "26.37.1.412792",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412792",
           "date": "2026-10-28",
           "localizedDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
@@ -27,7 +27,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412791",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412791",
           "date": "2026-10-28",
           "localizedDescription": "GUI 18 targets Exception #160 with bundled Amazon domain compatibility scoped to native device authorization. HTTPS and original server authorization remain intact. Navigation/security guard tests, frontend/DSP tests and iOS compilation passed; on-device completion unverified.",
@@ -36,7 +36,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412790",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412790",
           "date": "2026-10-28",
           "localizedDescription": "GUI 17 repairs the stalled native device-authorization loading branch using Amazon's original authenticated cookie-refresh route. Server authorization remains intact. DSP, dispatch/guard tests and iOS compilation passed; on-device completion not yet verified.",
@@ -45,7 +45,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412789",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412789",
           "date": "2026-10-28",
           "localizedDescription": "GUI 16: native WebKit loading callbacks, page ownership and visibility tracing, plus a reversible 30-second gallery reveal test. DSP and diagnostic tests passed. Device verification pending; Home/Profile not confirmed fixed.",
@@ -54,7 +54,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412788",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412788",
           "date": "2026-10-28",
           "localizedDescription": "GUI 15: verified navigation-ready/props acknowledgement tracing and pre-editor view hierarchy snapshots to investigate loading overlays. Tests passed; device verification pending. Home/Profile not confirmed fixed.",
@@ -63,7 +63,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412786",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412786",
           "date": "2026-10-27",
           "localizedDescription": "GUI 14: verified bridgeless React Native host/error callback, bundle resolution/loading, root-view startup and shareable report. Diagnostic and DSP tests passed; device verification pending. Home/Profile are not confirmed fixed.",
@@ -72,7 +72,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412785",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412785",
           "date": "2026-10-27",
           "localizedDescription": "GUI 13: targeted frontend exception stacks, bridge/callback error capture, JSON API error codes and Share debug report. DSP and diagnostic tests passed. Home/Profile fix is not established; device verification pending.",
@@ -81,7 +81,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412784",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412784",
           "date": "2026-10-27",
           "localizedDescription": "GUI 12: thumb-reachable bottom-right launcher, saved dragging, dedicated long-press reset, visible compiled library version/source and gesture counters. Home/Profile remain unresolved. On-device verification pending.",
@@ -90,7 +90,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412783",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412783",
           "date": "2026-10-27",
           "localizedDescription": "Draggable Timbre launcher with saved position, long-press Reset position, grouped request diagnostics, and notification-locale empty-service compatibility. Home/Profile remain unresolved. Sign before installation.",
@@ -99,7 +99,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412782",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412782",
           "date": "2026-10-27",
           "localizedDescription": "Original Timbre controller: interactive graph, vertical faders, five tabs, full effect controls, presets and app-local route rules. Home/Profile remain unresolved; page diagnostics added. UI requires on-device verification. Sign before installation.",
@@ -108,7 +108,7 @@
           "minOSVersion": "16.0"
         },
         {
-          "version": "26.37.1.412780",
+          "version": "26.37.1",
           "buildVersion": "26.37.1.412780",
           "date": "2026-10-27",
           "localizedDescription": "Headphone head tracking, invert direction and recenter controls; isolated shared-keychain retries for Home/Profile testing. Unsigned IPA. On-device verification of these changes is pending.",
@@ -117,11 +117,12 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1.412792",
+      "version": "26.37.1",
       "versionDate": "2026-10-28",
       "versionDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
       "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
-      "size": 175310248
+      "size": 175310248,
+      "buildVersion": "26.37.1.412792"
     }
   ],
   "news": [],

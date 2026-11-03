@@ -20,17 +20,24 @@ def update(ipa, url, destination, repository):
     if bundle != "com.amazon.mp3.AmazonCloudPlayer":
         raise ValueError("Unexpected app identity")
     build = str(info["CFBundleVersion"])
+    marketing_version = str(info["CFBundleShortVersionString"])
     raw = f"https://raw.githubusercontent.com/{repository}/main"
     target = Path(destination)
     feed = json.loads(target.read_text()) if target.exists() else {}
     date = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     description = "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation."
-    version = {"version": build, "buildVersion": build, "date": date,
+    version = {"version": marketing_version, "buildVersion": build, "date": date,
                "localizedDescription": description, "downloadURL": url,
                "size": Path(ipa).stat().st_size,
                "minOSVersion": str(info.get("MinimumOSVersion", "16.0"))}
     old = next((a for a in feed.get("apps", []) if a.get("bundleIdentifier") == bundle), {})
-    versions = [v for v in old.get("versions", []) if v.get("buildVersion") != build]
+    versions = [dict(v) for v in old.get("versions", []) if v.get("buildVersion") != build]
+    for previous in versions:
+        # Previous publishers wrote the four-part CFBundleVersion into both fields.
+        # Normalize only when the version exactly duplicated the old build string.
+        if (previous.get("version") == previous.get("buildVersion") and
+                str(previous.get("buildVersion", "")).startswith(marketing_version + ".")):
+            previous["version"] = marketing_version
     versions.insert(0, version)
     versions.sort(key=lambda v: tuple(int(x) for x in v["buildVersion"].split(".")), reverse=True)
     versions = versions[:20]
@@ -41,7 +48,8 @@ def update(ipa, url, destination, repository):
            "localizedDescription": description,
            "iconURL": raw + "/assets/icon.png", "tintColor": "#6366F1",
            "category": "music", "versions": versions,
-           "version": latest["version"], "versionDate": latest["date"],
+           "version": latest["version"], "buildVersion": latest["buildVersion"],
+           "versionDate": latest["date"],
            "versionDescription": latest["localizedDescription"],
            "downloadURL": latest["downloadURL"], "size": latest["size"]}
     feed.update({"name": "Amazon Music with Timbre",
