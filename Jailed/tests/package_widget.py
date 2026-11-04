@@ -44,7 +44,12 @@ class WidgetPackagingTests(unittest.TestCase):
             (widget / 'Info.plist').write_bytes(plistlib.dumps(widget_info))
             (widget / 'TimbreWidgets').write_bytes(bytes.fromhex('cffaedfe') + bytes(128))
 
-            with patch.dict(os.environ, {'TIMBRE_BUILD_VERSION': '26.37.22'}, clear=False):
+            # Keep this fixture independent of the release workflow's version.
+            # CI sets both variables, and the marketing version takes precedence.
+            with patch.dict(os.environ, {
+                'TIMBRE_BUILD_VERSION': '26.37.22',
+                'TIMBRE_MARKETING_VERSION': '26.37.22',
+            }, clear=False):
                 packager.package(source, library, output, widget)
             with zipfile.ZipFile(output) as packaged:
                 names = packaged.namelist()
