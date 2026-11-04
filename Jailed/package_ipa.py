@@ -60,7 +60,7 @@ def inject(data):
     return bytes(data)
 
 
-def package(source, library, output):
+def package(source, library, output, widget=None):
     raw = Path(source).read_bytes()
     if raw[:2] == b'\x1f\x8b':
         raw = gzip.decompress(raw)
@@ -69,6 +69,19 @@ def package(source, library, output):
         raise ValueError('Invalid Timbre library')
     if b'TimbreEmbeddedBuild21' not in lib:
         raise ValueError('Expected GUI 21 library marker; refusing a stale compiled library')
+    widget_dir = Path(widget) if widget else None
+    widget_info = None
+    if widget_dir:
+        widget_info_path = widget_dir / 'Info.plist'
+        if not widget_info_path.is_file():
+            raise ValueError('Widget extension is missing Info.plist')
+        widget_info = plistlib.loads(widget_info_path.read_bytes())
+        if widget_info.get('CFBundleIdentifier') != 'com.amazon.mp3.AmazonCloudPlayer.TimbreWidgets':
+            raise ValueError('Widget extension bundle ID must be nested under the Amazon app')
+        if widget_info.get('NSExtension', {}).get('NSExtensionPointIdentifier') != 'com.apple.widgetkit-extension':
+            raise ValueError('Widget extension point is invalid')
+        if not (widget_dir / widget_info.get('CFBundleExecutable', '')).is_file():
+            raise ValueError('Compiled widget executable is missing')
     with zipfile.ZipFile(io.BytesIO(raw)) as original:
         candidates = [n for n in original.namelist() if n.startswith('Payload/') and n.count('/') == 2 and n.endswith('.app/Info.plist')]
         if len(candidates) != 1:
@@ -88,6 +101,16 @@ def package(source, library, output):
         plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
         plist['TimbreGUIBuild'] = 21
         plist['NSMotionUsageDescription'] = 'Timbre uses motion from compatible headphones to keep the spatial sound stage stable as you turn your head.'
+        # A unique URL scheme allows Home/Lock Screen WidgetKit taps to foreground
+        # the existing app. Do not replace Amazon's own URL registrations.
+        url_types = plist.get('CFBundleURLTypes', [])
+        if not isinstance(url_types, list):
+            url_types = []
+        if not any('timbre-amazon' in item.get('CFBundleURLSchemes', [])
+                   for item in url_types if isinstance(item, dict)):
+            url_types.append({'CFBundleURLName': 'com.soum91.timbre.widget',
+                              'CFBundleURLSchemes': ['timbre-amazon']})
+        plist['CFBundleURLTypes'] = url_types
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.
         for key in ['UISupportedDevices', 'WKCompanionAppBundleIdentifier', 'WKWatchKitApp', 'NSExtension']:
@@ -97,9 +120,8 @@ def package(source, library, output):
             for entry in original.infolist():
                 if not entry.filename.startswith(root):
                     continue
-                # This first iPhone test needs no notification or Watch extension.
-                # Removing these also removes nested provisioning requirements
-                # and avoids parent/extension version and identity mismatches.
+                # Original app/Watch extensions may be signed for a different team.
+                # Remove them, then insert only our own matching widget extension.
                 if any(entry.filename.startswith(root+prefix) for prefix in ['PlugIns/', 'Watch/', 'com.apple.WatchPlaceholder/', 'AppClips/']):
                     continue
                 if '/_CodeSignature/' in entry.filename or '/SC_Info/' in entry.filename or entry.filename.endswith('embedded.mobileprovision'):
@@ -110,6 +132,21 @@ def package(source, library, output):
             item.create_system = 3
             item.external_attr = 0o100755 << 16
             out.writestr(item, lib, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            if widget_dir:
+                widget_info['CFBundleVersion'] = plist['CFBundleVersion']
+                widget_info['CFBundleShortVersionString'] = plist.get('CFBundleShortVersionString', '1.0')
+                widget_root = root + 'PlugIns/TimbreWidgets.appex/'
+                for path in sorted(widget_dir.rglob('*')):
+                    if not path.is_file():
+                        continue
+                    relative = path.relative_to(widget_dir).as_posix()
+                    if relative.startswith('_CodeSignature/') or relative == 'embedded.mobileprovision':
+                        continue
+                    data = plistlib.dumps(widget_info) if relative == 'Info.plist' else path.read_bytes()
+                    widget_entry = zipfile.ZipInfo(widget_root + relative)
+                    widget_entry.create_system = 3
+                    widget_entry.external_attr = (0o100755 if relative == widget_info['CFBundleExecutable'] else 0o100644) << 16
+                    out.writestr(widget_entry, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
     with zipfile.ZipFile(output) as out:
         if out.testzip():
             raise ValueError('ZIP integrity check failed')
@@ -117,7 +154,13 @@ def package(source, library, output):
         parsed = list(commands(packaged_executable))
         assert any(c == 0xC and b'TimbreNative-FlareStore.dylib' in packaged_executable[o:o+s] for c,o,s in parsed)
         assert out.read(root+'Frameworks/TimbreNative-FlareStore.dylib') == lib
-        assert not any('.appex/' in n or '/com.apple.WatchPlaceholder/' in n for n in out.namelist())
+        extension = root + 'PlugIns/TimbreWidgets.appex/'
+        if widget_dir:
+            assert extension + widget_info['CFBundleExecutable'] in out.namelist()
+            assert plistlib.loads(out.read(extension + 'Info.plist'))['CFBundleVersion'] == plist['CFBundleVersion']
+        else:
+            assert not any('.appex/' in n for n in out.namelist())
+        assert not any('/com.apple.WatchPlaceholder/' in n for n in out.namelist())
         verified = plistlib.loads(out.read(info))
         assert verified['CFBundleIdentifier'] == 'com.amazon.mp3.AmazonCloudPlayer'
         assert verified['CFBundleVersion'] == plist['CFBundleVersion']
@@ -129,7 +172,8 @@ if __name__ == '__main__':
     import json
     p = argparse.ArgumentParser()
     p.add_argument('source'); p.add_argument('library'); p.add_argument('output')
+    p.add_argument('--widget', help='Compiled TimbreWidgets.appex directory to embed')
     args = p.parse_args()
-    print(json.dumps(package(args.source, args.library, args.output)))
+    print(json.dumps(package(args.source, args.library, args.output, args.widget)))
 
 

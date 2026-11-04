@@ -61,6 +61,31 @@ Use increasing processed-frame counts plus the audible -12 dB test to verify a r
 - `NativeDSP/tests/test.cpp`: audio processing tests
 - `Jailed/package_ipa.py`: unsigned IPA packager
 - `.github/workflows/build.yml`: standalone build and optional packaging
+- `Widget/TimbreWidgets.swift`: small/medium Home Screen and circular/rectangular/inline Lock Screen widgets
+
+## Widget and Lock Screen launch (experimental)
+
+The build now compiles `TimbreWidgets.appex` with WidgetKit (iOS 16+) and includes
+it in the optional Amazon Music IPA package. Unlike the original packaging step,
+it does not discard this new extension. A tap uses the dedicated
+`timbre-amazon://open` launch scheme to foreground the unchanged Amazon app ID.
+Timbre also reattaches its floating editor launcher when the app becomes active.
+
+The widget displays EQ on/off, band count and effect count **only if** the final
+signer gives the parent app and extension the same
+`group.com.soum91.amazon.timbre` App Group entitlement. Without that entitlement,
+it intentionally displays `OPEN APP` rather than inventing playback/EQ data.
+The widget is a launcher/status widget, not a replacement for Amazon's playback
+engine. In particular, album metadata and interactive song controls are not
+claimed until a verified media metadata bridge exists.
+
+When signing the unsigned IPA, the sideloader must sign both the parent `.app`
+and `PlugIns/TimbreWidgets.appex`, with compatible bundle IDs/profiles. If the
+signer drops extensions or cannot provision the App Group, the widget may not
+appear or its status may be unavailable. The system's native Lock Screen Now
+Playing card is separate from the WidgetKit widget. Foreground activation is
+now logged in page diagnostics, but its media-session ownership still needs
+on-device verification before claiming the native Now Playing tap is fixed.
 
 Source provenance and third-party notices remain in the imported files. No blanket relicensing of Amazon software is implied.
 

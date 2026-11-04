@@ -711,6 +711,21 @@ extern "C" NSDictionary *TBEmbeddedInitialConfig(void) {
         @"spatial":@{@"on":@(settings.spatial.load()),@"mode":@1,@"headTracking":@(settings.headTrack.load()),@"headInvert":@(settings.headInvert.load())},
         @"reverb":@{@"on":@(settings.reverb.load()),@"mix":@0.18},@"width":@{@"on":@(settings.stereo.load()),@"width":@(settings.width.load())}};
 }
+static void TBPublishWidgetStatus(NSDictionary *config) {
+    // This is only a non-sensitive status snapshot. Shared defaults work if the
+    // final signer provisions both app and extension for the same App Group.
+    NSUserDefaults *shared = [[NSUserDefaults alloc] initWithSuiteName:@"group.com.soum91.amazon.timbre"];
+    if (!shared) return;
+    int enabledEffects = 0;
+    for (NSString *key in @[@"comp", @"crossfeed", @"spatial", @"reverb", @"width"]) {
+        if ([section(config,key)[@"on"] boolValue]) enabledEffects++;
+    }
+    [shared setObject:@{@"enabled": @([config[@"enabled"] boolValue]),
+                        @"bands": @([config[@"bands"] isKindOfClass:NSArray.class] ? [config[@"bands"] count] : 0),
+                        @"effects": @(enabledEffects),
+                        @"updatedAt": [NSDate date]}
+               forKey:@"TimbreWidget.status.v1"];
+}
 extern "C" void TBEmbeddedApplyConfig(NSDictionary *config) {
     // Called on the main queue. Route snapshots modify a copy, never the editor's base settings.
     NSMutableDictionary *d=[config mutableCopy];
@@ -750,6 +765,7 @@ extern "C" void TBEmbeddedApplyConfig(NSDictionary *config) {
     settings.headTrack=fx.spatial.headTracking;settings.headInvert=fx.spatial.headInvert;
     os_unfair_lock_lock(&fxLock);embeddedFX=fx;os_unfair_lock_unlock(&fxLock);fullConfigActive=true;
     settings.generation.fetch_add(1,std::memory_order_release);
+    TBPublishWidgetStatus(d);
     dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();});
 }
 extern "C" NSDictionary *TBEmbeddedStatus(void) {return @{@"frames":@(processed.load()),@"enabled":@(settings.on.load()),@"callbacks":@(callbacks.load())};}
@@ -875,6 +891,7 @@ static UIWindow *TBNativeWindow(void) {
 - (void)open {UIViewController *vc=self.button.window.rootViewController;while(vc.presentedViewController)vc=vc.presentedViewController;if([vc isKindOfClass:UINavigationController.class]&&[((UINavigationController *)vc).topViewController isKindOfClass:TBNativeController.class])return;UIViewController *controller=TBCreateEmbeddedController();UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:controller];nav.modalInPresentation=YES;self.editorNavigation=nav;tbEditorNavigation=nav;self.button.hidden=YES;[vc presentViewController:nav animated:YES completion:nil];}
 @end
 
+static TBLauncher *tbSharedLauncher = nil;
 __attribute__((constructor)) static void launchTimbreNative() {
     @autoreleasepool {
         mach_timebase_info_data_t timebase;mach_timebase_info(&timebase);headFreshTicks=(uint64_t)(0.5*1e9*timebase.denom/timebase.numer);
@@ -891,7 +908,13 @@ __attribute__((constructor)) static void launchTimbreNative() {
         _dyld_register_func_for_add_image(tbObserveKeychain);
         realSet=&AUGraphSetNodeInputCallback;realStart=&AUGraphStart;realDispose=&DisposeAUGraph;
         _dyld_register_func_for_add_image(addedImage);
-        dispatch_async(dispatch_get_main_queue(),^{static TBLauncher *launcher=[TBLauncher new];[launcher attach];tbCaptureViewHierarchy();updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[launcher attach];updateHeadTracking();tbCaptureViewHierarchy();}];});
+        dispatch_async(dispatch_get_main_queue(),^{tbSharedLauncher=[TBLauncher new];[tbSharedLauncher attach];tbCaptureViewHierarchy();updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[tbSharedLauncher attach];updateHeadTracking();tbCaptureViewHierarchy();}];});
+        // React Native's scene may activate after the dylib constructor. Attach
+        // immediately when iOS foregrounds the app from a widget or media card.
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            TBRecordNativePageEvent(@"Timbre app foregrounded (widget/media handoff)");
+            dispatch_async(dispatch_get_main_queue(), ^{ [tbSharedLauncher attach];tbCaptureViewHierarchy(); });
+        }];
     }
 }
 

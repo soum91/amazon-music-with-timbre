@@ -2,7 +2,7 @@ name: Build Amazon Music with Timbre
 on:
   push:
     branches: [main]
-    paths: ['Jailed/**', 'NativeDSP/**', 'scripts/**', '.github/workflows/build.yml']
+    paths: ['Jailed/**', 'NativeDSP/**', 'Widget/**', 'scripts/**', '.github/workflows/build.yml']
   workflow_dispatch:
     inputs:
       package_ipa:
@@ -38,6 +38,8 @@ jobs:
         run: |
           clang -fobjc-arc -fblocks Jailed/TimbreFrontendDiagnostics.m Jailed/tests/frontend.m -framework Foundation -o /tmp/frontend-tests
           /tmp/frontend-tests
+      - name: Test widget IPA packaging
+        run: python3 -m unittest discover -s Jailed/tests -p 'package_widget.py'
       - name: Build embedded iOS library
         run: |
           mkdir -p build
@@ -56,6 +58,19 @@ jobs:
           name: Timbre-embedded-library
           path: build/TimbreNative-FlareStore.dylib
           if-no-files-found: error
+      - name: Build iOS 16+ Home and Lock Screen widget extension
+        run: |
+          mkdir -p build/TimbreWidgets.appex
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos swiftc -target arm64-apple-ios16.0 -sdk "$SDK" -O -parse-as-library -application-extension -emit-executable -module-name TimbreWidgets Widget/TimbreWidgets.swift -o build/TimbreWidgets.appex/TimbreWidgets
+          cp Widget/Info.plist build/TimbreWidgets.appex/Info.plist
+          file build/TimbreWidgets.appex/TimbreWidgets
+      - name: Upload widget extension for signing diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Timbre-widget-unsigned
+          path: build/TimbreWidgets.appex/
+          if-no-files-found: error
       - name: Fetch private source IPA
         if: ${{ inputs.package_ipa == true }}
         env:
@@ -65,7 +80,7 @@ jobs:
           gh release download source-ipa --repo "$GITHUB_REPOSITORY" --pattern Amazon-Music-source.ipa --dir input
       - name: Package unsigned IPA
         if: ${{ inputs.package_ipa == true }}
-        run: python3 Jailed/package_ipa.py input/Amazon-Music-source.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre.ipa
+        run: python3 Jailed/package_ipa.py input/Amazon-Music-source.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre.ipa --widget build/TimbreWidgets.appex
       - name: Upload unsigned IPA
         if: ${{ inputs.package_ipa == true }}
         uses: actions/upload-artifact@v4
