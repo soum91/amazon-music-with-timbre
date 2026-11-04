@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
+      "localizedDescription": "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.1",
+          "buildVersion": "26.37.1.412798",
+          "date": "2026-11-04T03:53:08Z",
+          "localizedDescription": "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412798/Amazon-Music-Timbre.ipa",
+          "size": 175338382,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1",
           "buildVersion": "26.37.1.412792",
@@ -118,11 +127,11 @@
         }
       ],
       "version": "26.37.1",
-      "versionDate": "2026-10-28T15:34:45Z",
-      "versionDescription": "GUI 19 adds packed/padded 24-bit and 32-bit integer PCM support, actual output/stream format reporting, and an optional 48 kHz session preference. PCM sanitizer, frontend and DSP tests plus iOS compilation passed. Home remains unresolved; navigation decisions have a separate bounded record. Device verification pending.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412792/Amazon-Music-Timbre-Audio-Formats-19.ipa",
-      "size": 175310248,
-      "buildVersion": "26.37.1.412792"
+      "buildVersion": "26.37.1.412798",
+      "versionDate": "2026-11-04T03:53:08Z",
+      "versionDescription": "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412798/Amazon-Music-Timbre.ipa",
+      "size": 175338382
     }
   ],
   "news": [],
