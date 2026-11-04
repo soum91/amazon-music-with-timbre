@@ -78,23 +78,35 @@ jobs:
         run: |
           mkdir -p input
           gh release download source-ipa --repo "$GITHUB_REPOSITORY" --pattern Amazon-Music-source.ipa --dir input
+      - name: Fetch verified working Timbre 19 IPA for requested release
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p input
+          gh release download build-26.37.1.412792 --repo "$GITHUB_REPOSITORY" --pattern Amazon-Music-Timbre-Audio-Formats-19.ipa --dir input
       - name: Package unsigned IPA
-        if: ${{ inputs.package_ipa == true }}
-        run: python3 Jailed/package_ipa.py input/Amazon-Music-source.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre.ipa --widget build/TimbreWidgets.appex
+        if: ${{ inputs.package_ipa == true || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]')) }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            python3 Jailed/package_ipa.py input/Amazon-Music-Timbre-Audio-Formats-19.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre.ipa --widget build/TimbreWidgets.appex --keep-working-library
+          else
+            python3 Jailed/package_ipa.py input/Amazon-Music-source.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre.ipa --widget build/TimbreWidgets.appex
+          fi
       - name: Upload unsigned IPA
-        if: ${{ inputs.package_ipa == true }}
+        if: ${{ inputs.package_ipa == true || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]')) }}
         uses: actions/upload-artifact@v4
         with:
           name: Amazon-Music-Timbre-unsigned
           path: build/Amazon-Music-Timbre.ipa
           if-no-files-found: error
       - name: Publish IPA release and update sideloader feed
-        if: ${{ inputs.package_ipa == true }}
+        if: ${{ inputs.package_ipa == true || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]')) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-$TIMBRE_BUILD_VERSION"
-          gh release create "$TAG" build/Amazon-Music-Timbre.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Music with Timbre $TIMBRE_BUILD_VERSION" --notes "Unsigned non-jailbroken IPA with embedded Timbre. Sign before installation." --latest
+          gh release create "$TAG" build/Amazon-Music-Timbre.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Music with Timbre $TIMBRE_BUILD_VERSION" --notes "Preserves the verified Timbre 19 Amazon executable and audio engine; adds Home and Lock Screen WidgetKit extension. Unsigned IPA: sign the parent app and widget extension together before installation. Native Now Playing tap behavior remains unverified." --latest
           ASSET_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Amazon-Music-Timbre.ipa"
           python3 scripts/update_source.py build/Amazon-Music-Timbre.ipa "$ASSET_URL" source.json --repository "$GITHUB_REPOSITORY"
           git config user.name github-actions
