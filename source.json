@@ -18,6 +18,15 @@
       "category": "music",
       "versions": [
         {
+          "version": "26.37.25",
+          "buildVersion": "26.37.25",
+          "date": "2026-11-04T17:38:27Z",
+          "localizedDescription": "Preserves the working Timbre 19 playback and EQ engine. Adds Home and Lock Screen widgets with an app-opening link. Unsigned IPA: sign both the main app and widget extension before installing. Native Now Playing card tap remains unverified.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.25/Amazon-Music-Timbre.ipa",
+          "size": 175341388,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "26.37.22",
           "buildVersion": "26.37.22",
           "date": "2026-11-04T04:24:38Z",
@@ -135,12 +144,12 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.22",
-      "buildVersion": "26.37.22",
-      "versionDate": "2026-11-04T04:24:38Z",
+      "version": "26.37.25",
+      "buildVersion": "26.37.25",
+      "versionDate": "2026-11-04T17:38:27Z",
       "versionDescription": "Preserves the working Timbre 19 playback and EQ engine. Adds Home and Lock Screen widgets with an app-opening link. Unsigned IPA: sign both the main app and widget extension before installing. Native Now Playing card tap remains unverified.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.22/Amazon-Music-Timbre.ipa",
-      "size": 175338370
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.25/Amazon-Music-Timbre.ipa",
+      "size": 175341388
     }
   ],
   "news": [],
