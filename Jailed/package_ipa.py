@@ -60,7 +60,14 @@ def inject(data):
     return bytes(data)
 
 
-def package(source, library, output, widget=None):
+def has_timbre_load_command(data):
+    """Only accept the same dylib load path used by the existing working IPA."""
+    name = b'@executable_path/Frameworks/TimbreNative-FlareStore.dylib\0'
+    return any(cmd == 0xC and name in data[offset:offset + size]
+               for cmd, offset, size in commands(data))
+
+
+def package(source, library, output, widget=None, keep_working_library=False):
     raw = Path(source).read_bytes()
     if raw[:2] == b'\x1f\x8b':
         raw = gzip.decompress(raw)
@@ -94,12 +101,24 @@ def package(source, library, output, widget=None):
         if plist['CFBundleIdentifier'] != 'com.amazon.mp3.AmazonCloudPlayer':
             raise ValueError('This test adapter is only for Amazon Music')
         exe = root + plist['CFBundleExecutable']
-        modified = inject(original.read(exe))
+        installed = root + 'Frameworks/TimbreNative-FlareStore.dylib'
+        original_executable = original.read(exe)
+        already_injected = has_timbre_load_command(original_executable)
+        if keep_working_library and not already_injected:
+            raise ValueError('Cannot preserve an embedded library in an original IPA')
+        if already_injected and installed not in original.namelist():
+            raise ValueError('Existing Timbre load command has no matching library')
+        # Preserve the complete, previously verified Amazon executable when
+        # repackaging a working Timbre 19 IPA. Never inject a second load command.
+        modified = original_executable if already_injected else inject(original_executable)
+        selected_library = original.read(installed) if keep_working_library else lib
         # Preserve Amazon identity; login uses this bundle ID. Signing is external.
         plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Music Timbre'
         plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
-        plist['TimbreGUIBuild'] = 21
+        # Keep the UI identity truthful in the preservation build. The shipped
+        # library remains Build 19, even though the app build number increases.
+        plist['TimbreGUIBuild'] = plist.get('TimbreGUIBuild', 19) if keep_working_library else 21
         plist['NSMotionUsageDescription'] = 'Timbre uses motion from compatible headphones to keep the spatial sound stage stable as you turn your head.'
         # A unique URL scheme allows Home/Lock Screen WidgetKit taps to foreground
         # the existing app. Do not replace Amazon's own URL registrations.
@@ -126,12 +145,14 @@ def package(source, library, output, widget=None):
                     continue
                 if '/_CodeSignature/' in entry.filename or '/SC_Info/' in entry.filename or entry.filename.endswith('embedded.mobileprovision'):
                     continue
+                if entry.filename == installed:
+                    continue
                 content = modified if entry.filename == exe else plistlib.dumps(plist) if entry.filename == info else original.read(entry)
                 out.writestr(entry, content, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
             item = zipfile.ZipInfo(root + 'Frameworks/TimbreNative-FlareStore.dylib')
             item.create_system = 3
             item.external_attr = 0o100755 << 16
-            out.writestr(item, lib, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            out.writestr(item, selected_library, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
             if widget_dir:
                 widget_info['CFBundleVersion'] = plist['CFBundleVersion']
                 widget_info['CFBundleShortVersionString'] = plist.get('CFBundleShortVersionString', '1.0')
@@ -153,7 +174,11 @@ def package(source, library, output, widget=None):
         packaged_executable = out.read(exe)
         parsed = list(commands(packaged_executable))
         assert any(c == 0xC and b'TimbreNative-FlareStore.dylib' in packaged_executable[o:o+s] for c,o,s in parsed)
-        assert out.read(root+'Frameworks/TimbreNative-FlareStore.dylib') == lib
+        assert out.read(installed) == selected_library
+        assert sum(n == installed for n in out.namelist()) == 1
+        assert has_timbre_load_command(packaged_executable)
+        if already_injected:
+            assert packaged_executable == original_executable
         extension = root + 'PlugIns/TimbreWidgets.appex/'
         if widget_dir:
             assert extension + widget_info['CFBundleExecutable'] in out.namelist()
@@ -173,7 +198,10 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('source'); p.add_argument('library'); p.add_argument('output')
     p.add_argument('--widget', help='Compiled TimbreWidgets.appex directory to embed')
+    p.add_argument('--keep-working-library', action='store_true',
+                   help='Keep the existing Timbre dylib from a previously injected IPA')
     args = p.parse_args()
-    print(json.dumps(package(args.source, args.library, args.output, args.widget)))
+    print(json.dumps(package(args.source, args.library, args.output, args.widget,
+                             args.keep_working_library)))
 
 

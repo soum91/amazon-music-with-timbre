@@ -87,6 +87,23 @@ Playing card is separate from the WidgetKit widget. Foreground activation is
 now logged in page diagnostics, but its media-session ownership still needs
 on-device verification before claiming the native Now Playing tap is fixed.
 
+### Preserve the verified Timbre 19 playback baseline
+
+The known-good source is the released `build-26.37.1.412792` IPA (Timbre 19,
+source `ca37a4bc03f8`). The packager accepts an already-injected app without
+adding a duplicate load command or dylib. With `--keep-working-library`, it
+retains the exact original Amazon executable and embedded Timbre 19 library,
+while adding the WidgetKit extension and launch URL. For example:
+
+```text
+TIMBRE_BUILD_VERSION=26.37.1.412797 python3 Jailed/package_ipa.py working-19.ipa build/TimbreNative-FlareStore.dylib updated-unsigned.ipa --widget build/TimbreWidgets.appex --keep-working-library
+```
+
+Do not present this as an upgrade of Timbre's audio engine or a verified fix for
+the native iOS Now Playing card. The unsigned app and nested extension must be
+signed together before installation. Preserving the executable/library is
+verified by byte comparison, but on-device widget registration is unverified.
+
 Source provenance and third-party notices remain in the imported files. No blanket relicensing of Amazon software is implied.
 
 ## EmberSign / FlareStore source

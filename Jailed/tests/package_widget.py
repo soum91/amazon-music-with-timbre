@@ -56,6 +56,25 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertNotIn(app + 'PlugIns/Old.appex/Info.plist', names)
                 self.assertIn(app + 'PlugIns/TimbreWidgets.appex/TimbreWidgets', names)
 
+            # The user's known-working Timbre 19 IPA is already injected. Updating
+            # the widget must never add another load command or duplicate dylib.
+            retained = root / 'retained.ipa'
+            packager.package(output, library, retained, widget, keep_working_library=True)
+            with zipfile.ZipFile(output) as first, zipfile.ZipFile(retained) as second:
+                self.assertEqual(first.read(app + 'AmazonMusic'), second.read(app + 'AmazonMusic'))
+                self.assertEqual(first.read(app + 'Frameworks/TimbreNative-FlareStore.dylib'),
+                                 second.read(app + 'Frameworks/TimbreNative-FlareStore.dylib'))
+                self.assertEqual(second.namelist().count(app + 'Frameworks/TimbreNative-FlareStore.dylib'), 1)
+
+            updated = root / 'updated.ipa'
+            replacement = bytes.fromhex('cffaedfe') + b'TimbreEmbeddedBuild21 + new code'
+            library.write_bytes(replacement)
+            packager.package(output, library, updated, widget)
+            with zipfile.ZipFile(output) as first, zipfile.ZipFile(updated) as second:
+                self.assertEqual(first.read(app + 'AmazonMusic'), second.read(app + 'AmazonMusic'))
+                self.assertEqual(second.read(app + 'Frameworks/TimbreNative-FlareStore.dylib'), replacement)
+                self.assertEqual(second.namelist().count(app + 'Frameworks/TimbreNative-FlareStore.dylib'), 1)
+
     def test_invalid_widget_cannot_be_silently_embedded(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
