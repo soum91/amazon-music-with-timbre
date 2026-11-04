@@ -13,10 +13,10 @@ permissions:
   contents: write
 concurrency:
   group: amazon-music-timbre-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     env:
       TIMBRE_BUILD_VERSION: 26.37.2
     steps:
