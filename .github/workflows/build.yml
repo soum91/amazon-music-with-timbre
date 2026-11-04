@@ -62,12 +62,14 @@ jobs:
           name: Timbre-embedded-library
           path: build/TimbreNative-FlareStore.dylib
           if-no-files-found: error
-      - name: Build iOS 16+ Home and Lock Screen widget extension
+      - name: Build WidgetKit extension using the Xcode extension target
         run: |
-          mkdir -p build/TimbreWidgets.appex
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos swiftc -target arm64-apple-ios16.0 -sdk "$SDK" -O -parse-as-library -application-extension -emit-executable -module-name TimbreWidgets Widget/TimbreWidgets.swift -o build/TimbreWidgets.appex/TimbreWidgets
-          cp Widget/Info.plist build/TimbreWidgets.appex/Info.plist
+          xcodebuild -quiet -project Widget/TimbreWidgets.xcodeproj -target TimbreWidgets -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CONFIGURATION_BUILD_DIR="$PWD/build/widget-products" CODE_SIGNING_ALLOWED=NO build
+          test -f build/widget-products/TimbreWidgets.appex/TimbreWidgets
+          cp -R build/widget-products/TimbreWidgets.appex build/TimbreWidgets.appex
+          plutil -lint build/TimbreWidgets.appex/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' build/TimbreWidgets.appex/Info.plist | grep -Fx 'com.apple.widgetkit-extension'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' build/TimbreWidgets.appex/Info.plist | grep -Fx 'iPhoneOS'
           file build/TimbreWidgets.appex/TimbreWidgets
       - name: Upload widget extension for signing diagnostics
         uses: actions/upload-artifact@v4

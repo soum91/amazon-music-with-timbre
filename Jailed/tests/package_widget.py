@@ -42,7 +42,7 @@ class WidgetPackagingTests(unittest.TestCase):
                 out.writestr('Payload/AmazonMusic.app/PlugIns/Old.appex/Info.plist', b'dropped')
             widget_info = plistlib.loads((Path(__file__).resolve().parents[2] / 'Widget/Info.plist').read_bytes())
             (widget / 'Info.plist').write_bytes(plistlib.dumps(widget_info))
-            (widget / 'TimbreWidgets').write_bytes(b'widget executable')
+            (widget / 'TimbreWidgets').write_bytes(bytes.fromhex('cffaedfe') + bytes(128))
 
             with patch.dict(os.environ, {'TIMBRE_BUILD_VERSION': '26.37.22'}, clear=False):
                 packager.package(source, library, output, widget)

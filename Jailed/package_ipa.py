@@ -87,8 +87,15 @@ def package(source, library, output, widget=None, keep_working_library=False):
             raise ValueError('Widget extension bundle ID must be nested under the Amazon app')
         if widget_info.get('NSExtension', {}).get('NSExtensionPointIdentifier') != 'com.apple.widgetkit-extension':
             raise ValueError('Widget extension point is invalid')
-        if not (widget_dir / widget_info.get('CFBundleExecutable', '')).is_file():
+        if widget_info.get('CFBundlePackageType') != 'XPC!':
+            raise ValueError('Widget extension must be an XPC app extension bundle')
+        if 'iPhoneOS' not in widget_info.get('CFBundleSupportedPlatforms', []):
+            raise ValueError('Widget extension lacks an iPhoneOS platform declaration')
+        widget_binary = widget_dir / widget_info.get('CFBundleExecutable', '')
+        if not widget_binary.is_file():
             raise ValueError('Compiled widget executable is missing')
+        if widget_binary.read_bytes()[:4] != b'\xcf\xfa\xed\xfe':
+            raise ValueError('Widget executable must be an arm64 Mach-O binary')
     with zipfile.ZipFile(io.BytesIO(raw)) as original:
         candidates = [n for n in original.namelist() if n.startswith('Payload/') and n.count('/') == 2 and n.endswith('.app/Info.plist')]
         if len(candidates) != 1:
@@ -192,6 +199,7 @@ def package(source, library, output, widget=None, keep_working_library=False):
         if widget_dir:
             assert extension + widget_info['CFBundleExecutable'] in out.namelist()
             assert plistlib.loads(out.read(extension + 'Info.plist'))['CFBundleVersion'] == plist['CFBundleVersion']
+            assert plistlib.loads(out.read(extension + 'Info.plist'))['CFBundleShortVersionString'] == plist['CFBundleShortVersionString']
         else:
             assert not any('.appex/' in n for n in out.namelist())
         assert not any('/com.apple.WatchPlaceholder/' in n for n in out.namelist())

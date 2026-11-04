@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleDisplayName</key><string>Timbre Widgets</string>
+    <key>CFBundleDisplayName</key><string>Amazon Music Timbre</string>
     <key>CFBundleExecutable</key><string>TimbreWidgets</string>
     <key>CFBundleIdentifier</key><string>com.amazon.mp3.AmazonCloudPlayer.TimbreWidgets</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -12,6 +12,7 @@
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>MinimumOSVersion</key><string>16.0</string>
+    <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
