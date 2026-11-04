@@ -115,7 +115,16 @@ def package(source, library, output, widget=None, keep_working_library=False):
         # Preserve Amazon identity; login uses this bundle ID. Signing is external.
         plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Music Timbre'
-        plist['CFBundleVersion'] = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.1.412779')
+        # The user-facing version must advance on every release. A four-part
+        # build ID alone is collapsed to the same three-part display version
+        # by sideloaders such as FlareStore, making updates look identical.
+        version = os.environ.get('TIMBRE_BUILD_VERSION', '26.37.2')
+        marketing_version = os.environ.get('TIMBRE_MARKETING_VERSION', version)
+        if (len(marketing_version.split('.')) != 3 or
+                not all(part.isdigit() for part in marketing_version.split('.'))):
+            raise ValueError('TIMBRE_MARKETING_VERSION must have three numeric components')
+        plist['CFBundleVersion'] = version
+        plist['CFBundleShortVersionString'] = marketing_version
         # Keep the UI identity truthful in the preservation build. The shipped
         # library remains Build 19, even though the app build number increases.
         plist['TimbreGUIBuild'] = plist.get('TimbreGUIBuild', 19) if keep_working_library else 21

@@ -12,7 +12,8 @@ def update(ipa, url, destination, repository):
     if urlparse(url).scheme != "https":
         raise ValueError("Release asset URL must use HTTPS")
     with zipfile.ZipFile(ipa) as z:
-        names = [n for n in z.namelist() if n.startswith("Payload/") and n.count("/") == 2 and n.endswith(".app/Info.plist")]
+        all_entries = z.namelist()
+        names = [n for n in all_entries if n.startswith("Payload/") and n.count("/") == 2 and n.endswith(".app/Info.plist")]
         if len(names) != 1:
             raise ValueError("Expected one main app")
         info = plistlib.loads(z.read(names[0]))
@@ -25,7 +26,14 @@ def update(ipa, url, destination, repository):
     target = Path(destination)
     feed = json.loads(target.read_text()) if target.exists() else {}
     date = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    description = "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation."
+    has_widget = any('/PlugIns/TimbreWidgets.appex/Info.plist' in n for n in all_entries)
+    if has_widget and info.get('TimbreGUIBuild') == 19:
+        description = ("Preserves the working Timbre 19 playback and EQ engine. "
+                       "Adds Home and Lock Screen widgets with an app-opening link. "
+                       "Unsigned IPA: sign both the main app and widget extension before installing. "
+                       "Native Now Playing card tap remains unverified.")
+    else:
+        description = "Embedded Timbre EQ GUI, parametric bands, effects and native audio processing. Sign before installation."
     version = {"version": marketing_version, "buildVersion": build, "date": date,
                "localizedDescription": description, "downloadURL": url,
                "size": Path(ipa).stat().st_size,

@@ -1,11 +1,13 @@
 """Standalone IPA packaging tests: no copyrighted/source IPA required."""
 import importlib.util
+import os
 import plistlib
 import struct
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'package_ipa.py'
@@ -42,7 +44,8 @@ class WidgetPackagingTests(unittest.TestCase):
             (widget / 'Info.plist').write_bytes(plistlib.dumps(widget_info))
             (widget / 'TimbreWidgets').write_bytes(b'widget executable')
 
-            packager.package(source, library, output, widget)
+            with patch.dict(os.environ, {'TIMBRE_BUILD_VERSION': '26.37.22'}, clear=False):
+                packager.package(source, library, output, widget)
             with zipfile.ZipFile(output) as packaged:
                 names = packaged.namelist()
                 app = 'Payload/AmazonMusic.app/'
@@ -50,6 +53,8 @@ class WidgetPackagingTests(unittest.TestCase):
                 extension = plistlib.loads(packaged.read(app + 'PlugIns/TimbreWidgets.appex/Info.plist'))
                 self.assertEqual(result['CFBundleIdentifier'], info['CFBundleIdentifier'])
                 self.assertEqual(extension['CFBundleVersion'], result['CFBundleVersion'])
+                self.assertEqual(result['CFBundleShortVersionString'], '26.37.22')
+                self.assertEqual(extension['CFBundleShortVersionString'], '26.37.22')
                 self.assertEqual(extension['CFBundleIdentifier'], result['CFBundleIdentifier'] + '.TimbreWidgets')
                 self.assertTrue(any('timbre-amazon' in u['CFBundleURLSchemes'] for u in result['CFBundleURLTypes']))
                 self.assertTrue(any('amazonmusic' in u['CFBundleURLSchemes'] for u in result['CFBundleURLTypes']))

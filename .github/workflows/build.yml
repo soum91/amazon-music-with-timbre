@@ -18,11 +18,15 @@ jobs:
   build:
     runs-on: macos-15
     env:
-      TIMBRE_BUILD_VERSION: 26.37.1.412778
+      TIMBRE_BUILD_VERSION: 26.37.2
     steps:
       - uses: actions/checkout@v4
-      - name: Assign increasing build version
-        run: echo "TIMBRE_BUILD_VERSION=26.37.1.$((412777 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+      - name: Assign visible three-part version
+        run: |
+          # The release counter is the third component, so FlareStore displays
+          # each update as a different version rather than truncating the ID.
+          echo "TIMBRE_BUILD_VERSION=26.37.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "TIMBRE_MARKETING_VERSION=26.37.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
       - name: Test DSP
         continue-on-error: true
         run: |
