@@ -12,11 +12,20 @@
       "bundleIdentifier": "com.amazon.mp3.AmazonCloudPlayer",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Parametric EQ inside Amazon Music",
-      "localizedDescription": "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation.",
+      "localizedDescription": "Preserves the working Timbre 19 playback and EQ engine. Adds Home and Lock Screen widgets with an app-opening link. Unsigned IPA: sign both the main app and widget extension before installing. Native Now Playing card tap remains unverified.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.22",
+          "buildVersion": "26.37.22",
+          "date": "2026-11-04T04:24:38Z",
+          "localizedDescription": "Preserves the working Timbre 19 playback and EQ engine. Adds Home and Lock Screen widgets with an app-opening link. Unsigned IPA: sign both the main app and widget extension before installing. Native Now Playing card tap remains unverified.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.22/Amazon-Music-Timbre.ipa",
+          "size": 175338370,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.1",
           "buildVersion": "26.37.1.412798",
@@ -126,12 +135,12 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.1",
-      "buildVersion": "26.37.1.412798",
-      "versionDate": "2026-11-04T03:53:08Z",
-      "versionDescription": "Embedded Timbre EQ GUI, parametric bands, effects, native audio processing, and app-private login storage compatibility. Sign before installation.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.1.412798/Amazon-Music-Timbre.ipa",
-      "size": 175338382
+      "version": "26.37.22",
+      "buildVersion": "26.37.22",
+      "versionDate": "2026-11-04T04:24:38Z",
+      "versionDescription": "Preserves the working Timbre 19 playback and EQ engine. Adds Home and Lock Screen widgets with an app-opening link. Unsigned IPA: sign both the main app and widget extension before installing. Native Now Playing card tap remains unverified.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/build-26.37.22/Amazon-Music-Timbre.ipa",
+      "size": 175338370
     }
   ],
   "news": [],
