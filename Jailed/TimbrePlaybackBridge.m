@@ -312,8 +312,10 @@ static void TBSetNowPlayingInfo(id center, SEL selector, NSDictionary *info) {
 
 __attribute__((constructor))
 static void TBInitializePlaybackBridge(void) {
+    // Login may hit the keychain before UIKit processes the main queue.
+    // Register this after the preserved Timbre 19 constructor, at load time.
+    TBInstallLabKeychainCompatibility();
     dispatch_async(dispatch_get_main_queue(), ^{
-        TBInstallLabKeychainCompatibility();
         TBStateLock = [NSObject new];
         TBStartLocalServer();
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification
