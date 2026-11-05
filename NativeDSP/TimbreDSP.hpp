@@ -29,8 +29,9 @@ struct CrossfeedParams { bool on=false; double level=-6, cutoff=700, delay=0.3; 
 struct WidthParams { bool on=false; double width=1, balance=0; bool mono=false, swap=false; };
 // mode 0: classic interaural delay/head shadow; mode 1: Immersive (stereo upmix to 9 virtual speakers rendered with KEMAR HRTFs).
 // hrtf 0: KEMAR diffused (flatter, "Natural"); 1: KEMAR normal (stronger localisation, "Precise"). room adds early reflections.
-// headTracking rotates the virtual speakers against the listener's head yaw (see Effects::setHeadYaw).
-struct SpatialParams { bool on=false; double angle=30, amount=0.8, distance=1; int mode=0; double surround=0.5, height=0.3; int hrtf=1; double room=0.4; bool headTracking=false, headInvert=false; };
+// headTracking rotates the virtual speakers against the listener's head (yaw and pitch, see Effects::setHeadPose).
+// headInvert flips left/right, headInvertPitch flips up/down for headphones that report the opposite sign.
+struct SpatialParams { bool on=false; double angle=30, amount=0.8, distance=1; int mode=0; double surround=0.5, height=0.3; int hrtf=1; double room=0.4; bool headTracking=false, headInvert=false, headInvertPitch=false; };
 struct ReverbParams { bool on=false; double decay=1.8, predelay=20, damping=6000, width=1, mix=0.25; };
 struct LimiterParams { bool on=true; double ceiling=-1; };
 struct EffectsParams {
@@ -51,8 +52,17 @@ public:
   void reset() noexcept;
   void process(float* interleavedStereo, size_t frames) noexcept;
   bool ready() const noexcept { return ready_; }
-  // Head yaw in degrees, positive = turned right. Call before process(); invalid data holds the stage still.
-  void setHeadYaw(double degrees, bool valid) noexcept { headYaw_ = degrees; headValid_ = valid; }
+  // Head pose in degrees: yaw positive = turned right, pitch positive = looking up. Call before process().
+  // Invalid data holds the stage where it was; it only re-centres after a long outage or recenterHead().
+  void setHeadPose(double yawDegrees, double pitchDegrees, bool valid) noexcept {
+    headYaw_ = yawDegrees; headPitch_ = pitchDegrees; headValid_ = valid;
+  }
+  void setHeadYaw(double degrees, bool valid) noexcept { setHeadPose(degrees, 0, valid); }
+  // Treat the next valid reading as straight ahead.
+  void recenterHead() noexcept { headSnapped_ = false; }
+  // Direction (degrees) of a speaker at (azimuth, elevation) as heard by a head at (yaw, pitch).
+  static void headRelative(double azimuth, double elevation, double yaw, double pitch,
+                           double* azOut, double* elOut) noexcept;
 private:
   struct Line { float* buf=nullptr; size_t cap=0, len=1, pos=0; };
   struct Comb { Line line; float store=0, feedback=0, damp1=0, damp2=1; };
@@ -60,15 +70,18 @@ private:
   static constexpr int kSources = 9;
   static constexpr size_t kBlock = 256;
   // hR/hL: impulse responses into the right and left ear for this virtual speaker's current direction.
-  struct Source { float* hist=nullptr; const float* hR=nullptr; const float* hL=nullptr; int key=-1; };
-  bool sphereFilters(int k, double headYaw, const float** hR, const float** hL, int* key) const noexcept;
+  // slot: two converted head-tracking filter pairs per speaker (current and incoming), each 2 x kMaxTaps.
+  struct Source { float* hist=nullptr; const float* hR=nullptr; const float* hL=nullptr; int key=-1;
+                  float* slot=nullptr; int cur=0; };
+  bool sphereFilters(int k, double yaw, double pitch, Source& src, const float** hR, const float** hL, int* key) noexcept;
   void loadHRTF() noexcept;
   void immersive(float* interleaved, size_t frames) noexcept;
   Source src_[kSources];
   size_t taps_=0;
   float* accL_=nullptr; float* accR_=nullptr; float* tmp_=nullptr; float* tmp2_=nullptr;
-  int sphereRate_=-1;          // index into the head-tracking table for this sample rate, or -1
-  double headYaw_=0, headRef_=0; bool headValid_=false, headSnapped_=false;
+  int sphereRate_=-1;          // index into the 3D head-tracking table for this sample rate, or -1
+  double headYaw_=0, headPitch_=0, headRef_=0, headPitchRef_=0, lastYaw_=0, lastPitch_=0, staleSeconds_=0;
+  bool headValid_=false, headSnapped_=false;
   Line upDelay_[10]; OnePole upLP_[10]; OnePole topLP_[2];
   Line limDelay_[2]; float* limWindow_=nullptr; size_t limLen_=1, limPos_=0; float limAtt_=0;
   float imAmount_=0, imSurround_=0, imHeight_=0, imRoom_=0, imNorm_=1;

@@ -95,5 +95,57 @@ int main() {
   assert(right.first > right.second*1.5);                        // turned right: sound sits to the left
   assert(std::abs(off.first-off.second) < 0.1*off.first);        // tracking off ignores yaw
  }
+ {
+  // Head tracking works at every supported rate, including 88.2/96 kHz (it used to freeze there),
+  // and a short gap in motion data holds the turned stage instead of snapping it back to centre.
+  auto run=[](double rate,double yaw,int gapPasses){
+    Effects fx; EffectsParams p; p.limiter.on=false; p.spatial.on=true; p.spatial.mode=1; p.spatial.amount=1;
+    p.spatial.surround=0; p.spatial.height=0; p.spatial.room=0; p.spatial.headTracking=true;
+    assert(fx.prepare(rate)); fx.configure(p); fx.reset();
+    const size_t frames=static_cast<size_t>(rate/10);
+    std::vector<float> v(frames*2);
+    double eL=0,eR=0;
+    const int passes=4+gapPasses;
+    for(int pass=0;pass<passes;pass++){
+      for(size_t i=0;i<frames;i++){ float x=std::sin((pass*frames+i)*0.05f)*0.4f; v[2*i]=x; v[2*i+1]=x; }
+      const bool gap=pass>=3&&pass<3+gapPasses;
+      fx.setHeadPose(pass==0?0:yaw,0,!gap); fx.process(v.data(),frames);
+      if(pass==passes-1) for(size_t i=0;i<frames;i++){ assert(std::isfinite(v[2*i])); eL+=v[2*i]*v[2*i]; eR+=v[2*i+1]*v[2*i+1]; }
+    }
+    return std::make_pair(eL,eR);
+  };
+  for(double rate:{44100.0,48000.0,88200.0,96000.0}){
+    auto r=run(rate,70,0); assert(r.first > r.second*1.5);
+  }
+  // 0.5 s without motion data, then the same head yaw again: still to the left, not re-centred.
+  auto held=run(48000,70,5); assert(held.first > held.second*1.5);
+ }
+ {
+  // Geometry: turning right moves the front speaker left; looking up moves it below; both together compose.
+  double az=0,el=0;
+  Effects::headRelative(0,0,30,0,&az,&el); assert(std::abs(az+30)<1e-9 && std::abs(el)<1e-9);
+  Effects::headRelative(0,0,0,20,&az,&el); assert(std::abs(az)<1e-9 && std::abs(el+20)<1e-9);
+  Effects::headRelative(0,40,0,40,&az,&el); assert(std::abs(el)<1e-9);          // a 40-degree-high speaker is level when looking up 40
+  Effects::headRelative(90,0,0,30,&az,&el); assert(std::abs(az-90)<1e-9 && std::abs(el)<1e-9);  // side speaker unaffected by nodding
+ }
+ {
+  // Pitch changes the rendered output (it used to be ignored entirely) and stays finite.
+  auto render=[](double pitch){
+    Effects fx; EffectsParams p; p.limiter.on=false; p.spatial.on=true; p.spatial.mode=1; p.spatial.amount=1;
+    p.spatial.surround=0; p.spatial.height=0; p.spatial.room=0; p.spatial.headTracking=true;
+    fx.prepare(48000); fx.configure(p); fx.reset();
+    std::vector<float> v(4800*2), out;
+    for(int pass=0;pass<4;pass++){
+      for(size_t i=0;i<4800;i++){ float x=std::sin((pass*4800+i)*0.05f)*0.4f; v[2*i]=x; v[2*i+1]=x; }
+      fx.setHeadPose(0,pass==0?0:pitch,true); fx.process(v.data(),4800);
+    }
+    for(float x:v) assert(std::isfinite(x));
+    return v;
+  };
+  auto level=render(0), up=render(35);
+  double diff=0,energy=0;
+  for(size_t i=0;i<level.size();i++){ diff+=(level[i]-up[i])*(level[i]-up[i]); energy+=level[i]*level[i]; }
+  assert(diff > 0.01*energy);
+ }
  std::cout<<"PASS: native DSP tests\n";
 }

@@ -53,7 +53,7 @@ jobs:
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbrePageDiagnostics.m -o build/page-diagnostics.o
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbreFrontendDiagnostics.m -o build/frontend-diagnostics.o
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbrePlaybackBridge.m -o build/playback-bridge.o
-          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -DTIMBRE_BUILD_VERSION=\"$TIMBRE_BUILD_VERSION\" -DTIMBRE_SOURCE_SHA=\"$GITHUB_SHA\" -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o build/frontend-diagnostics.o build/playback-bridge.o -framework UIKit -framework WebKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -framework MediaPlayer -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -DTIMBRE_BUILD_VERSION=\"$TIMBRE_BUILD_VERSION\" -DTIMBRE_SOURCE_SHA=\"$GITHUB_SHA\" -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o build/frontend-diagnostics.o build/playback-bridge.o -framework UIKit -framework WebKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -framework MediaPlayer -framework UniformTypeIdentifiers -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-FlareStore.dylib
           codesign --force --sign - build/TimbreNative-FlareStore.dylib
           codesign --verify --strict build/TimbreNative-FlareStore.dylib
           otool -L build/TimbreNative-FlareStore.dylib
@@ -75,8 +75,17 @@ jobs:
       - name: Build side-by-side experimental player bridge and widget
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -dynamiclib Jailed/TimbrePlaybackBridge.m Jailed/fishhook.c -framework Foundation -framework UIKit -framework MediaPlayer -framework Security -install_name @rpath/TimbrePlaybackBridge.dylib -o build/TimbrePlaybackBridge.dylib
+          # Lab audio library: built from current source (Timbre 19 lineage plus Lab fixes), without the
+          # bridge objects, which load separately. Extra header padding lets the packager add the bridge load command.
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -std=c++17 -fobjc-arc -O2 -DTIMBRE_BUILD_VERSION=\"$TIMBRE_BUILD_VERSION\" -DTIMBRE_SOURCE_SHA=\"$GITHUB_SHA\" -dynamiclib Jailed/TimbreNative.mm NativeDSP/TimbreDSP.cpp build/fishhook.o build/embedded-ui.o build/page-diagnostics.o build/frontend-diagnostics.o -framework UIKit -framework WebKit -framework CoreMotion -framework CoreGraphics -framework Foundation -framework AVKit -framework AVFoundation -framework AudioToolbox -framework Accelerate -framework MediaPlayer -framework UniformTypeIdentifiers -Wl,-headerpad,0x4000 -install_name @rpath/TimbreNative-FlareStore.dylib -o build/TimbreNative-Lab.dylib
+          nm -gU build/TimbreNative-Lab.dylib | grep -E '_TimbreSpectrumSnapshot|_TBEmbeddedWidgetSnapshot|_TBEmbeddedWidgetCommand|_TBEmbeddedRecenterHead'
+          # Bridge: Objective-C plus a small Swift shim so it can ask WidgetKit to refresh widgets.
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -c Jailed/TimbrePlaybackBridge.m -o build/bridge-lab.o
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -c Jailed/fishhook.c -o build/fishhook-lab.o
+          xcrun --sdk iphoneos swiftc -target arm64-apple-ios16.0 -sdk "$SDK" -O -parse-as-library -emit-library Jailed/TimbreWidgetReload.swift build/bridge-lab.o build/fishhook-lab.o -framework Foundation -framework UIKit -framework MediaPlayer -framework Security -framework WidgetKit -Xlinker -install_name -Xlinker @rpath/TimbrePlaybackBridge.dylib -o build/TimbrePlaybackBridge.dylib
           file build/TimbrePlaybackBridge.dylib
+          nm -gU build/TimbrePlaybackBridge.dylib | grep _TBReloadWidgetTimelines
+          otool -L build/TimbrePlaybackBridge.dylib
           xcodebuild -quiet -project Widget/TimbreWidgets.xcodeproj -target TimbreWidgets -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CONFIGURATION_BUILD_DIR="$PWD/build/widget-lab-products" SWIFT_ACTIVE_COMPILATION_CONDITIONS=TIMBRE_EXPERIMENTAL CODE_SIGNING_ALLOWED=NO build
           test -f build/widget-lab-products/TimbreWidgets.appex/TimbreWidgets
           cp -R build/widget-lab-products/TimbreWidgets.appex build/TimbreWidgets-Lab.appex
@@ -118,7 +127,7 @@ jobs:
       - name: Package side-by-side experimental IPA (preserve Build 19 DSP)
         if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-player-lab]') }}
         run: |
-          python3 Jailed/package_ipa.py input/Amazon-Music-Timbre-Audio-Formats-19.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre-Lab.ipa --widget build/TimbreWidgets-Lab.appex --keep-working-library --experimental-playback-bridge build/TimbrePlaybackBridge.dylib
+          python3 Jailed/package_ipa.py input/Amazon-Music-Timbre-Audio-Formats-19.ipa build/TimbreNative-Lab.dylib build/Amazon-Music-Timbre-Lab.ipa --widget build/TimbreWidgets-Lab.appex --experimental-playback-bridge build/TimbrePlaybackBridge.dylib
           python3 - <<'PY'
           import plistlib, zipfile
           original='input/Amazon-Music-Timbre-Audio-Formats-19.ipa'
@@ -131,7 +140,9 @@ jobs:
               assert info['CFBundleIdentifier']=='com.soum91.amazonmusictimbre.experimental'
               assert widget['CFBundleIdentifier']==info['CFBundleIdentifier']+'.TimbreWidgets'
               assert b'@loader_path/TimbrePlaybackBridge.dylib' in new.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[:16384]
-              assert old.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[16384:] == new.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[16384:]
+              assert info['TimbreLocalToken'] == widget['TimbreLocalToken']
+              # Lab ships the source-built audio library, not the frozen Timbre 19 binary.
+              assert old.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib') != new.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')
           PY
       - name: Upload experimental IPA artifact
         if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-player-lab]') }}
@@ -151,7 +162,13 @@ jobs:
           ## Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)
 
           ### Changelog
-          - Fix Amazon sign-in ("Sign In Error", Exception #47, MAP Error Code 0). Amazon's own code is now given the original Amazon Music bundle ID inside the Lab app, so its login is no longer rejected for the Lab bundle ID. iOS and widgets still see the Lab ID, so it stays side by side with stable.
+          - Head tracking now follows up/down as well as left/right. The renderer uses the full measured KEMAR sphere (elevations -40 to +90) at every sample rate.
+          - Fix head tracking freezing on 88.2/96 kHz (Ultra HD) tracks, and the stage snapping back to centre after brief gaps in AirPods motion data.
+          - New "Invert up/down" toggle and a Recenter button on the Spatial page.
+          - Three widgets: Player (live progress bar, play/pause/skip), Spectrum (snapshot of what is playing, refreshed while music plays) and Timbre EQ (real response curve, on/off, previous/next preset). Buttons work without opening the app on iOS 17+.
+          - Presets: rename or update saved presets by swiping, import preset files (Equalizer APO / AutoEq text), and the widget shows which preset is active.
+          - Lab now runs a Timbre audio library built from current source instead of the frozen Timbre 19 binary.
+          - Keeps the sign-in fix from 26.37.34.
 
           ### Notes
           Standalone bundle com.soum91.amazonmusictimbre.experimental. Keeps Amazon's amznmp3 and wazeamznmp3 callback schemes, which can compete with the installed stable app. Stable Amazon Music + Timbre and its data are untouched. Timbre 19 audio code is unmodified; its dylib loads an additive player metadata bridge. Unsigned IPA; sign app, widget extension and both dylibs before installing. Published only to the Lab FlareStore feed.

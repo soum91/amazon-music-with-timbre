@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AVKit/AVKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <math.h>
 #include <time.h>
 #import "TimbreEmbeddedUI.h"
@@ -130,7 +131,7 @@ static double roundSignificant(double v, int digits) {
         @"comp": @{@"on": @NO, @"threshold": @(-24.0), @"knee": @6.0, @"ratio": @3.0, @"attack": @10.0, @"release": @150.0, @"makeup": @0.0},
         @"crossfeed": @{@"on": @NO, @"level": @(-6.0), @"cutoff": @700.0, @"delay": @0.3},
         @"width": @{@"on": @NO, @"width": @1.0, @"balance": @0.0, @"mono": @NO, @"swap": @NO},
-        @"spatial": @{@"on": @NO, @"angle": @30.0, @"amount": @0.8, @"distance": @1.0, @"mode": @1, @"surround": @0.5, @"height": @0.3, @"hrtf": @1, @"room": @0.4, @"headTracking": @NO, @"headInvert": @NO},
+        @"spatial": @{@"on": @NO, @"angle": @30.0, @"amount": @0.8, @"distance": @1.0, @"mode": @1, @"surround": @0.5, @"height": @0.3, @"hrtf": @1, @"room": @0.4, @"headTracking": @NO, @"headInvert": @NO, @"headInvertPitch": @NO},
         @"routing": @{@"enabled": @NO, @"devices": @{}, @"types": @{}},
         @"cast": @{@"enabled": @NO, @"device": @"", @"muteLocal": @YES},
         @"reverb": @{@"on": @NO, @"decay": @1.8, @"predelay": @20.0, @"damping": @6000.0, @"width": @1.0, @"mix": @0.25},
@@ -1206,7 +1207,92 @@ static NSArray<NSDictionary *> *builtInPresets(void) {
 }
 static NSArray<NSString *> *effectKeys(void) { return @[@"output", @"comp", @"crossfeed", @"width", @"spatial", @"reverb", @"limiter"]; }
 
-@interface TBAmazonPresetsController : UITableViewController
+// Presets from other EQ apps that are not Equalizer APO text. Returns nil when the text is not one of them,
+// so the caller falls back to the Equalizer APO / AutoEq parser.
+static NSDictionary *TBParseForeignPreset(NSString *text, NSString *fileName) {
+    (void)text; (void)fileName;
+    return nil;
+}
+// Identifies the EQ part of a preset so widgets can show "edited" once bands change after applying it.
+static NSString *TBPresetSignature(id bands, id preamp) {
+    NSMutableArray *rows = [NSMutableArray new];
+    if ([bands isKindOfClass:NSArray.class]) for (NSDictionary *b in bands) {
+        if (![b isKindOfClass:NSDictionary.class]) continue;
+        [rows addObject:[NSString stringWithFormat:@"%d:%ld:%.2f:%.2f:%.3f", [b[@"enabled"] boolValue], (long)[b[@"type"] integerValue],
+                         [b[@"frequency"] doubleValue], [b[@"gain"] doubleValue], [b[@"q"] doubleValue]]];
+    }
+    return [NSString stringWithFormat:@"%.2f|%@", [preamp doubleValue], [rows componentsJoinedByString:@","]];
+}
+static void TBApplyPresetToStore(NSDictionary *p) {
+    TBAmazonStore *store = [TBAmazonStore shared];
+    NSMutableArray *bands = deepMutable(p[@"bands"]) ?: [NSMutableArray new];
+    if (bands.count == 0) [bands addObject:[TBAmazonStore band:1000 type:0 gain:0 q:1.41]];
+    while (bands.count > kMaxBands) [bands removeLastObject];
+    store.config[@"bands"] = bands;
+    store.config[@"preamp"] = p[@"preamp"] ?: @0;
+    NSDictionary *fx = p[@"effects"];
+    if ([fx isKindOfClass:NSDictionary.class]) for (NSString *k in fx) {
+        id v = deepMutable(@{@"v": fx[k]})[@"v"];
+        if ([v isKindOfClass:NSMutableDictionary.class] && [store.config[k] isKindOfClass:NSMutableDictionary.class]) [store.config[k] addEntriesFromDictionary:v];
+        else if (v) store.config[k] = v;
+    }
+    store.config[@"presetName"] = p[@"name"] ?: @"Custom";
+    store.config[@"presetSignature"] = TBPresetSignature(store.config[@"bands"], store.config[@"preamp"]);
+    [store changed];
+    [[NSNotificationCenter defaultCenter] postNotificationName:kChanged object:nil];
+}
+static NSArray<NSDictionary *> *TBAllPresets(void) {
+    NSMutableArray *all = [builtInPresets() mutableCopy];
+    NSArray *saved = [[TBAmazonStore shared] valueAt:@"presets"];
+    if ([saved isKindOfClass:NSArray.class]) [all addObjectsFromArray:saved];
+    return all;
+}
+
+#pragma mark - Widget bridge (called on the main queue by the local widget endpoint)
+
+NSDictionary *TBEmbeddedWidgetSnapshot(void) {
+    TBAmazonStore *store = [TBAmazonStore shared];
+    NSDictionary *c = store.config;
+    NSMutableArray *bands = [NSMutableArray new];
+    for (NSDictionary *b in store.bands) {
+        if (![b isKindOfClass:NSDictionary.class]) continue;
+        [bands addObject:@{@"enabled": @([b[@"enabled"] boolValue]), @"type": @([b[@"type"] integerValue]),
+                           @"frequency": @([b[@"frequency"] doubleValue]), @"gain": @([b[@"gain"] doubleValue]),
+                           @"q": @([b[@"q"] doubleValue])}];
+    }
+    NSString *name = [c[@"presetName"] isKindOfClass:NSString.class] ? c[@"presetName"] : @"Custom";
+    BOOL edited = ![c[@"presetSignature"] isEqual:TBPresetSignature(c[@"bands"], c[@"preamp"])];
+    NSDictionary *(^on)(NSString *) = ^NSDictionary *(NSString *k) { return [c[k] isKindOfClass:NSDictionary.class] ? c[k] : @{}; };
+    return @{@"enabled": @([c[@"enabled"] boolValue]), @"preamp": @([c[@"preamp"] doubleValue]), @"bands": bands,
+             @"preset": name, @"edited": @(edited && c[@"presetSignature"] != nil),
+             @"spatial": @([on(@"spatial")[@"on"] boolValue]), @"headTracking": @([on(@"spatial")[@"headTracking"] boolValue]),
+             @"reverb": @([on(@"reverb")[@"on"] boolValue]), @"comp": @([on(@"comp")[@"on"] boolValue]),
+             @"crossfeed": @([on(@"crossfeed")[@"on"] boolValue]), @"width": @([on(@"width")[@"on"] boolValue])};
+}
+BOOL TBEmbeddedWidgetCommand(NSString *command) {
+    TBAmazonStore *store = [TBAmazonStore shared];
+    if ([command isEqualToString:@"eq/toggle"]) {
+        store.config[@"enabled"] = @(![store.config[@"enabled"] boolValue]);
+        [store changed];
+        [[NSNotificationCenter defaultCenter] postNotificationName:kChanged object:nil];
+        return YES;
+    }
+    if ([command isEqualToString:@"preset/next"] || [command isEqualToString:@"preset/previous"]) {
+        NSArray<NSDictionary *> *all = TBAllPresets();
+        if (all.count == 0) return NO;
+        NSString *current = store.config[@"presetName"];
+        NSInteger index = -1;
+        for (NSUInteger i = 0; i < all.count; i++) if ([all[i][@"name"] isEqual:current]) { index = (NSInteger)i; break; }
+        NSInteger step = [command hasSuffix:@"next"] ? 1 : -1;
+        NSInteger target = index < 0 ? (step > 0 ? 0 : (NSInteger)all.count - 1) : (index + step + (NSInteger)all.count) % (NSInteger)all.count;
+        TBApplyPresetToStore(all[(NSUInteger)target]);
+        if (![store.config[@"enabled"] boolValue]) { store.config[@"enabled"] = @YES; [store changed]; }
+        return YES;
+    }
+    return NO;
+}
+
+@interface TBAmazonPresetsController : UITableViewController <UIDocumentPickerDelegate>
 @end
 @implementation TBAmazonPresetsController
 - (instancetype)init {
@@ -1230,19 +1316,19 @@ static NSArray<NSString *> *effectKeys(void) { return @[@"output", @"comp", @"cr
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s { return @[@"", @"Built-in", @"Saved"][(NSUInteger)s]; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return @"Import reads Equalizer APO / AutoEq ParametricEQ.txt text from the clipboard.";
-    if (s == 2 && self.saved.count == 0) return @"Saved presets store the EQ plus all effect settings.";
+    if (s == 0) return @"Import reads Equalizer APO / AutoEq ParametricEQ.txt text from the clipboard or a file.";
+    if (s == 2) return self.saved.count ? @"Swipe a saved preset to rename it, update it with the current settings, or delete it." : @"Saved presets store the EQ plus all effect settings.";
     return nil;
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
-    return s == 0 ? 4 : s == 1 ? (NSInteger)builtInPresets().count : (NSInteger)self.saved.count;
+    return s == 0 ? 5 : s == 1 ? (NSInteger)builtInPresets().count : (NSInteger)self.saved.count;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [t dequeueReusableCellWithIdentifier:@"c" forIndexPath:ip];
     UIListContentConfiguration *cfg = [UIListContentConfiguration valueCellConfiguration];
     if (ip.section == 0) {
-        cfg.text = @[@"Save current as preset…", @"Import from clipboard", @"Copy EQ as text", @"Output devices & auto switching"][(NSUInteger)ip.row];
-        cfg.image = [UIImage systemImageNamed:@[@"plus.circle", @"doc.on.clipboard", @"square.and.arrow.up", @"hifispeaker.2"][(NSUInteger)ip.row]];
+        cfg.text = @[@"Save current as preset…", @"Import from clipboard", @"Import preset file…", @"Copy EQ as text", @"Output devices & auto switching"][(NSUInteger)ip.row];
+        cfg.image = [UIImage systemImageNamed:@[@"plus.circle", @"doc.on.clipboard", @"folder", @"square.and.arrow.up", @"hifispeaker.2"][(NSUInteger)ip.row]];
         cfg.textProperties.color = accentColor();
         cfg.imageProperties.tintColor = accentColor();
     } else {
@@ -1254,41 +1340,77 @@ static NSArray<NSString *> *effectKeys(void) { return @[@"output", @"comp", @"cr
     return c;
 }
 - (BOOL)tableView:(UITableView *)t canEditRowAtIndexPath:(NSIndexPath *)ip { return ip.section == 2; }
-- (void)tableView:(UITableView *)t commitEditingStyle:(UITableViewCellEditingStyle)style forRowAtIndexPath:(NSIndexPath *)ip {
-    if (style != UITableViewCellEditingStyleDelete) return;
-    [self.saved removeObjectAtIndex:(NSUInteger)ip.row];
-    [[TBAmazonStore shared] changed];
-    [t reloadData];
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    if (ip.section != 2) return nil;
+    __weak typeof(self) weakSelf = self;
+    NSUInteger row = (NSUInteger)ip.row;
+    UIContextualAction *del = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete"
+        handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        if (row < weakSelf.saved.count) [weakSelf.saved removeObjectAtIndex:row];
+        [[TBAmazonStore shared] changed];
+        [weakSelf.tableView reloadData];
+        done(YES);
+    }];
+    UIContextualAction *update = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"Update"
+        handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        if (row >= weakSelf.saved.count) { done(NO); return; }
+        TBAmazonStore *store = [TBAmazonStore shared];
+        NSMutableDictionary *fx = [NSMutableDictionary new];
+        for (NSString *k in effectKeys()) if (store.config[k]) fx[k] = store.config[k];
+        NSString *name = weakSelf.saved[row][@"name"] ?: @"Preset";
+        weakSelf.saved[row] = deepMutable(@{@"name": name, @"preamp": store.config[@"preamp"] ?: @0, @"bands": store.bands, @"effects": fx});
+        store.config[@"presetName"] = name;
+        store.config[@"presetSignature"] = TBPresetSignature(store.config[@"bands"], store.config[@"preamp"]);
+        [store changed];
+        [weakSelf.tableView reloadData];
+        [weakSelf toast:[NSString stringWithFormat:@"Updated %@", name]];
+        done(YES);
+    }];
+    update.backgroundColor = UIColor.systemIndigoColor;
+    UIContextualAction *rename = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"Rename"
+        handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        done(YES);
+        [weakSelf renameSavedAt:row];
+    }];
+    rename.backgroundColor = UIColor.systemOrangeColor;
+    return [UISwipeActionsConfiguration configurationWithActions:@[del, update, rename]];
+}
+- (void)renameSavedAt:(NSUInteger)row {
+    if (row >= self.saved.count) return;
+    NSString *old = self.saved[row][@"name"];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename preset" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *f) { f.text = old; f.autocapitalizationType = UITextAutocapitalizationTypeWords; f.clearButtonMode = UITextFieldViewModeWhileEditing; }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Rename" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        NSString *name = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (!name.length || row >= weakSelf.saved.count) return;
+        weakSelf.saved[row][@"name"] = name;
+        TBAmazonStore *store = [TBAmazonStore shared];
+        if ([store.config[@"presetName"] isEqual:old]) store.config[@"presetName"] = name;
+        [store changed];
+        [weakSelf.tableView reloadData];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 0) {
-        if (ip.row == 3) {
+        if (ip.row == 4) {
             UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[NSClassFromString(@"TBAmazonRoutesController") new]];
             [self presentViewController:nav animated:YES completion:nil];
             return;
         }
         if (ip.row == 0) [self saveCurrent];
-        else if (ip.row == 1) [self importClipboard];
+        else if (ip.row == 1) [self importText:UIPasteboard.generalPasteboard.string ?: @"" name:nil];
+        else if (ip.row == 2) [self importFile];
         else [self exportClipboard];
         return;
     }
     [self apply:ip.section == 1 ? builtInPresets()[(NSUInteger)ip.row] : self.saved[(NSUInteger)ip.row]];
 }
 - (void)apply:(NSDictionary *)p {
-    TBAmazonStore *store = [TBAmazonStore shared];
-    NSMutableArray *bands = deepMutable(p[@"bands"]) ?: [NSMutableArray new];
-    if (bands.count == 0) [bands addObject:[TBAmazonStore band:1000 type:0 gain:0 q:1.41]];
-    store.config[@"bands"] = bands;
-    store.config[@"preamp"] = p[@"preamp"] ?: @0;
-    NSDictionary *fx = p[@"effects"];
-    if ([fx isKindOfClass:NSDictionary.class]) for (NSString *k in fx) {
-        id v = deepMutable(@{@"v": fx[k]})[@"v"];
-        if ([v isKindOfClass:NSMutableDictionary.class] && [store.config[k] isKindOfClass:NSMutableDictionary.class]) [store.config[k] addEntriesFromDictionary:v];
-        else if (v) store.config[k] = v;
-    }
-    [store changed];
-    [[NSNotificationCenter defaultCenter] postNotificationName:kChanged object:nil];
+    TBApplyPresetToStore(p);
     [self toast:[NSString stringWithFormat:@"Applied %@", p[@"name"]]];
 }
 - (void)toast:(NSString *)message {
@@ -1315,8 +1437,9 @@ static NSArray<NSString *> *effectKeys(void) { return @[@"output", @"comp", @"cr
     }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (void)importClipboard {
-    NSString *text = UIPasteboard.generalPasteboard.string ?: @"";
+- (void)importText:(NSString *)text name:(NSString *)fileName {
+    NSDictionary *special = TBParseForeignPreset(text, fileName);
+    if (special) { [self apply:special]; return; }
     NSDictionary *codes = @{@"PK": @0, @"PEQ": @0, @"LS": @1, @"LSC": @1, @"LSQ": @1, @"HS": @2, @"HSC": @2, @"HSQ": @2,
                             @"LP": @3, @"LPQ": @3, @"HP": @4, @"HPQ": @4, @"BP": @5, @"NO": @6, @"AP": @7};
     NSRegularExpression *filter = [NSRegularExpression regularExpressionWithPattern:
@@ -1334,14 +1457,30 @@ static NSArray<NSString *> *effectKeys(void) { return @[@"output", @"comp", @"cr
         [bands addObject:@{@"enabled": @YES, @"type": type, @"frequency": @(clampd(f, 5, 20000)), @"gain": @(clampd(g, -24, 24)), @"q": @(clampd(q, .2, 10))}];
     }
     if (bands.count == 0) {
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Nothing to import" message:@"Copy Equalizer APO / AutoEq text such as\n\nPreamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 6.0 dB Q 0.70" preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Nothing to import" message:@"Use Equalizer APO / AutoEq text such as\n\nPreamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 6.0 dB Q 0.70" preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
         [self presentViewController:a animated:YES completion:nil];
         return;
     }
     NSTextCheckingResult *pm = [preamp firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
     const double pre = pm ? clampd([text substringWithRange:[pm rangeAtIndex:1]].doubleValue, -24, 0) : 0;
-    [self apply:@{@"name": [NSString stringWithFormat:@"%lu imported bands", (unsigned long)bands.count], @"preamp": @(pre), @"bands": bands}];
+    NSString *title = fileName.length ? fileName.stringByDeletingPathExtension : [NSString stringWithFormat:@"%lu imported bands", (unsigned long)bands.count];
+    [self apply:@{@"name": title, @"preamp": @(pre), @"bands": bands}];
+}
+- (void)importFile {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeItem] asCopy:YES];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *url = urls.firstObject;
+    if (!url) return;
+    NSData *data = [NSData dataWithContentsOfURL:url options:0 error:nil];
+    if (data.length > 2 * 1024 * 1024) data = nil;  // presets are tiny; refuse anything huge
+    NSString *text = data ? ([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?:
+                             [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding]) : nil;
+    [self importText:text ?: @"" name:url.lastPathComponent];
 }
 - (void)exportClipboard {
     TBAmazonStore *store = [TBAmazonStore shared];
@@ -1556,7 +1695,24 @@ static UIViewController *spatialPage(void) {
         [p param:@"Height (Immersive)" key:@"spatial.height" lo:0 hi:1 step:.01 log:NO unit:TBAmazonUnitPct in:s];
         [p param:@"Room (Immersive)" key:@"spatial.room" lo:0 hi:1 step:.01 log:NO unit:TBAmazonUnitPct in:s];
         [p toggle:@"Head tracking (AirPods)" key:@"spatial.headTracking" in:s];
-        [p toggle:@"Invert head direction" key:@"spatial.headInvert" in:s];
+        [p toggle:@"Invert left/right" key:@"spatial.headInvert" in:s];
+        [p toggle:@"Invert up/down" key:@"spatial.headInvertPitch" in:s];
+        {
+            UIButton *recenter = [UIButton buttonWithType:UIButtonTypeSystem];
+            UIButtonConfiguration *cfg = [UIButtonConfiguration grayButtonConfiguration];
+            cfg.title = @"Recenter head tracking";
+            cfg.subtitle = @"Face forward, then tap";
+            cfg.image = [UIImage systemImageNamed:@"scope"];
+            cfg.imagePadding = 8;
+            cfg.baseForegroundColor = accentColor();
+            cfg.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+            recenter.configuration = cfg;
+            [recenter addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                TBEmbeddedRecenterHead();
+                [[UIImpactFeedbackGenerator new] impactOccurred];
+            }] forControlEvents:UIControlEventTouchUpInside];
+            [s addArrangedSubview:recenter];
+        }
         [p param:@"Distance (Classic)" key:@"spatial.distance" lo:.3 hi:5 step:.1 log:NO unit:TBAmazonUnitMeters in:s];
         UIStackView *x = [p section:@"Crossfeed" toggle:@"crossfeed.on" footer:@"Bleeds a little of each channel into the other like speakers do, so hard-panned mixes stop feeling inside your skull."];
         [p chips:@[@{@"name": @"Subtle", @"values": @{@"crossfeed.level": @(-9.5), @"crossfeed.cutoff": @650}},

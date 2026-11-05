@@ -272,29 +272,66 @@ static void TBResolveMediaRemote(void) {
     });
 }
 
-// The local-only endpoint is deliberately read-only. The WidgetKit extension
-// can obtain Now Playing data even when a third-party signing profile does not
-// provide App Group entitlements. No streaming URL or account data is exposed.
-static void TBRespondToLocalClient(int client) {
-    struct timeval timeout = {1, 0};
-    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    int noSignal = 1;
-    setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, sizeof(noSignal));
-    char request[1025] = {0};
-    ssize_t count = recv(client, request, sizeof(request) - 1, 0);
-    if (count <= 0 || strncmp(request, "GET /player ", 12) != 0) {
-        close(client);
-        return;
-    }
-    NSDictionary *state;
-    @synchronized(TBStateLock) { state = [TBLatestPlayerState copy] ?: @{}; }
-    NSData *json = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
-    if (!json) json = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+// Local-only widget endpoint on 127.0.0.1. The WidgetKit extension reads playback, EQ and spectrum state here
+// (it works even when the signing profile grants no App Group) and sends button commands. Requests must carry
+// the per-install token the packager writes into both Info.plists, so other apps on the phone cannot drive it.
+// No stream URLs, cookies, account identifiers or tokens of Amazon's are ever exposed.
+static BOOL TBSendMediaCommand(NSInteger command);
+static void TBRequestWidgetReload(NSString *kind);
+
+static NSString *TBLocalToken(void) {
+    static NSString *token;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        id value = NSBundle.mainBundle.infoDictionary[@"TimbreLocalToken"];
+        token = [value isKindOfClass:NSString.class] && [value length] >= 16 ? [value copy] : nil;
+    });
+    return token;
+}
+
+static id TBOnMain(id (^block)(void)) {
+    if (NSThread.isMainThread) return block();
+    __block id result = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{ result = block(); });
+    return result;
+}
+
+static NSDictionary *TBEQState(void) {
+    NSDictionary *(*snapshot)(void) = (NSDictionary *(*)(void))dlsym(RTLD_DEFAULT, "TBEmbeddedWidgetSnapshot");
+    if (!snapshot) return @{};
+    return TBOnMain(^id { return snapshot() ?: @{}; });
+}
+
+static NSDictionary *TBSpectrumState(void) {
+    NSDictionary *(*snapshot)(void) = (NSDictionary *(*)(void))dlsym(RTLD_DEFAULT, "TimbreSpectrumSnapshot");
+    return snapshot ? (snapshot() ?: @{}) : @{};
+}
+
+static NSDictionary *TBWidgetState(void) {
+    NSDictionary *player;
+    @synchronized(TBStateLock) { player = [TBLatestPlayerState copy] ?: @{}; }
+    return @{@"player": player, @"eq": TBEQState(), @"spectrum": TBSpectrumState(),
+             @"time": @([NSDate date].timeIntervalSince1970)};
+}
+
+static BOOL TBRunWidgetCommand(NSString *command) {
+    if ([command isEqualToString:@"player/toggle"]) return TBSendMediaCommand(2);
+    if ([command isEqualToString:@"player/next"]) return TBSendMediaCommand(4);
+    if ([command isEqualToString:@"player/previous"]) return TBSendMediaCommand(5);
+    BOOL (*run)(NSString *) = (BOOL (*)(NSString *))dlsym(RTLD_DEFAULT, "TBEmbeddedWidgetCommand");
+    if (!run) return NO;
+    NSNumber *ok = TBOnMain(^id { return @(run(command)); });
+    if (ok.boolValue) TBRequestWidgetReload(@"com.soum91.timbre.eq");
+    return ok.boolValue;
+}
+
+static void TBSendResponse(int client, int status, NSData *body) {
+    NSString *reason = status == 200 ? @"OK" : status == 403 ? @"Forbidden" : @"Not Found";
     NSString *header = [NSString stringWithFormat:
-        @"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n",
-        (unsigned long)json.length];
+        @"HTTP/1.1 %d %@\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n",
+        status, reason, (unsigned long)body.length];
     NSMutableData *response = [[header dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
-    [response appendData:json];
+    [response appendData:body];
     const unsigned char *bytes = response.bytes;
     size_t remaining = response.length;
     while (remaining) {
@@ -303,6 +340,53 @@ static void TBRespondToLocalClient(int client) {
         bytes += sent;
         remaining -= (size_t)sent;
     }
+}
+
+static void TBRespondToLocalClient(int client) {
+    struct timeval timeout = {1, 0};
+    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    int noSignal = 1;
+    setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, sizeof(noSignal));
+    char request[2049] = {0};
+    ssize_t count = recv(client, request, sizeof(request) - 1, 0);
+    NSString *text = count > 0 ? [[NSString alloc] initWithBytes:request length:(NSUInteger)count encoding:NSUTF8StringEncoding] : nil;
+    NSArray<NSString *> *lines = [text componentsSeparatedByString:@"\r\n"];
+    NSArray<NSString *> *first = [lines.firstObject componentsSeparatedByString:@" "];
+    if (first.count < 2 || ![first[0] isEqualToString:@"GET"]) {
+        TBSendResponse(client, 404, [@"{}" dataUsingEncoding:NSUTF8StringEncoding]);
+        close(client);
+        return;
+    }
+    NSString *path = first[1];
+    NSString *token = TBLocalToken();
+    if (token) {
+        NSString *sent = nil;
+        for (NSString *line in lines) {
+            if ([line.lowercaseString hasPrefix:@"x-timbre-token:"])
+                sent = [[line substringFromIndex:15] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        }
+        if (![sent isEqualToString:token]) {
+            TBSendResponse(client, 403, [@"{}" dataUsingEncoding:NSUTF8StringEncoding]);
+            close(client);
+            return;
+        }
+    }
+    id body = nil;
+    if ([path isEqualToString:@"/player"]) {
+        @synchronized(TBStateLock) { body = [TBLatestPlayerState copy] ?: @{}; }
+    } else if ([path isEqualToString:@"/state"]) {
+        body = TBWidgetState();
+    } else if ([path hasPrefix:@"/command/"]) {
+        NSString *command = [path substringFromIndex:9];
+        BOOL ok = TBRunWidgetCommand(command);
+        // Give Amazon a moment to apply a transport change before reporting state back.
+        if (ok && [command hasPrefix:@"player/"]) usleep(350000);
+        NSMutableDictionary *state = [TBWidgetState() mutableCopy];
+        state[@"ok"] = @(ok);
+        body = state;
+    }
+    NSData *json = body ? [NSJSONSerialization dataWithJSONObject:body options:0 error:nil] : nil;
+    TBSendResponse(client, json ? 200 : 404, json ?: [@"{}" dataUsingEncoding:NSUTF8StringEncoding]);
     close(client);
 }
 
@@ -415,6 +499,37 @@ static void TBInstallURLHook(void) {
     }
 }
 
+static void TBRequestWidgetReload(NSString *kind) {
+    static void (*reload)(const char *);
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ reload = (void (*)(const char *))dlsym(RTLD_DEFAULT, "TBReloadWidgetTimelines"); });
+    if (!reload) return;
+    // WidgetKit does not charge reload budget while the app has an active audio session.
+    dispatch_async(dispatch_get_main_queue(), ^{ reload(kind.UTF8String); });
+}
+
+static NSString *TBLastTrackKey;
+static NSNumber *TBLastPlaying;
+static dispatch_source_t TBVisualizerTimer;
+
+static void TBStartWidgetRefresh(void) {
+    // Spectrum widget: refresh every 15 s while music plays. Track/EQ changes reload the other widgets at once.
+    TBVisualizerTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(TBVisualizerTimer, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), 15 * NSEC_PER_SEC, 3 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(TBVisualizerTimer, ^{
+        if (TBLastPlaying.boolValue) TBRequestWidgetReload(@"com.soum91.timbre.visualizer");
+    });
+    dispatch_resume(TBVisualizerTimer);
+    __block CFAbsoluteTime lastEQ = 0;
+    [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil
+                                                     queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - lastEQ < 1.5) return;
+        lastEQ = now;
+        TBRequestWidgetReload(@"com.soum91.timbre.eq");
+    }];
+}
+
 static void TBPublishNowPlaying(NSDictionary *info) {
     if (![info isKindOfClass:NSDictionary.class]) return;
     NSString *title = info[MPMediaItemPropertyTitle];
@@ -445,6 +560,13 @@ static void TBPublishNowPlaying(NSDictionary *info) {
     @synchronized(TBStateLock) { TBLatestPlayerState = [state copy]; }
     NSUserDefaults *shared = [[NSUserDefaults alloc] initWithSuiteName:TBSharedGroup];
     [shared setObject:state forKey:@"TimbreWidget.nowPlaying.v1"];
+    NSString *trackKey = [NSString stringWithFormat:@"%@\n%@\n%@", state[@"title"], state[@"artist"], state[@"album"]];
+    if (![trackKey isEqualToString:TBLastTrackKey] || ![state[@"playing"] isEqual:TBLastPlaying]) {
+        TBLastTrackKey = trackKey;
+        TBLastPlaying = state[@"playing"];
+        TBRequestWidgetReload(@"com.soum91.timbre.player");
+        TBRequestWidgetReload(@"com.soum91.timbre.visualizer");
+    }
 }
 
 static void TBSetNowPlayingInfo(id center, SEL selector, NSDictionary *info) {
@@ -468,6 +590,7 @@ static void TBInitializePlaybackBridge(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         TBStateLock = [NSObject new];
         TBStartLocalServer();
+        TBStartWidgetRefresh();
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                         object:nil queue:NSOperationQueue.mainQueue
                                                     usingBlock:^(__unused NSNotification *note) {

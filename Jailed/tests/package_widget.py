@@ -110,6 +110,8 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertEqual(ext_info['CFBundleIdentifier'],
                                  test_info['CFBundleIdentifier'] + '.TimbreWidgets')
                 self.assertEqual(test_info['CFBundleDisplayName'], 'Amazon Timbre Lab')
+                self.assertGreaterEqual(len(test_info['TimbreLocalToken']), 32)
+                self.assertEqual(ext_info['TimbreLocalToken'], test_info['TimbreLocalToken'])
                 self.assertTrue(any('timbre-amazon-lab' in t['CFBundleURLSchemes']
                                     for t in test_info['CFBundleURLTypes']))
                 self.assertTrue(any('amznmp3' in t['CFBundleURLSchemes']

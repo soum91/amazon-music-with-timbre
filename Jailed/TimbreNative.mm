@@ -27,6 +27,7 @@ static std::atomic<uint64_t> tbDragBegan{0},tbDragEnded{0};
 #include <cstring>
 #include <memory>
 #include <complex>
+#import <Accelerate/Accelerate.h>
 #include "fishhook.h"
 #include "../NativeDSP/TimbreDSP.hpp"
 
@@ -180,12 +181,12 @@ struct BandSettings {
 struct Settings {
     BandSettings bands[MaxBands];
     std::atomic<int> count{10};
-    std::atomic<bool> on{false}, comp{false}, crossfeed{false}, spatial{false}, reverb{false}, stereo{false}, headTrack{false}, headInvert{false};
+    std::atomic<bool> on{false}, comp{false}, crossfeed{false}, spatial{false}, reverb{false}, stereo{false}, headTrack{false}, headInvert{false}, headInvertPitch{false};
     std::atomic<float> preamp{-6}, width{1};
     std::atomic<bool> speakerProtect{false};
     std::atomic<uint64_t> generation{1};
 } settings;
-std::atomic<double> headYaw{0};
+std::atomic<double> headYaw{0}, headPitch{0};
 std::atomic<uint64_t> headTime{0}, headCenter{0};
 static uint64_t headFreshTicks=0;
 static void updateHeadTracking();
@@ -279,7 +280,7 @@ static void configure(Stream &s) noexcept {
     if(s.effectsReady) {
         timbre::EffectsParams p;
         p.comp.on=settings.comp.load();p.crossfeed.on=settings.crossfeed.load();
-        p.spatial.on=settings.spatial.load();p.spatial.mode=1;p.spatial.headTracking=settings.headTrack.load();p.spatial.headInvert=settings.headInvert.load();
+        p.spatial.on=settings.spatial.load();p.spatial.mode=1;p.spatial.headTracking=settings.headTrack.load();p.spatial.headInvert=settings.headInvert.load();p.spatial.headInvertPitch=settings.headInvertPitch.load();
         p.reverb.on=settings.reverb.load();p.reverb.mix=0.18;
         p.width.on=settings.stereo.load();p.width.width=settings.width.load();
         p.limiter.on=true;p.limiter.ceiling=-1;
@@ -290,6 +291,18 @@ static void configure(Stream &s) noexcept {
         s.effects->configure(p);
     }
     s.generation=generation;
+}
+// Visualizer tap: a mono copy of what is actually heard (after Timbre) for the widget's spectrum snapshot.
+// Visual only; concurrent streams may interleave samples, which merely blurs the picture.
+constexpr size_t TBSpecRing=8192;
+static float tbSpecRing[TBSpecRing];
+static std::atomic<uint64_t> tbSpecWrite{0}, tbSpecLast{0};
+static std::atomic<double> tbSpecRate{48000};
+static inline void TBFeedSpectrum(const float *stereo,UInt32 n,double rate) noexcept {
+    uint64_t w=tbSpecWrite.load(std::memory_order_relaxed);
+    for(UInt32 i=0;i<n;i++)tbSpecRing[(w+i)&(TBSpecRing-1)]=0.5f*(stereo[2*i]+stereo[2*i+1]);
+    tbSpecWrite.store(w+n,std::memory_order_release);
+    tbSpecRate.store(rate,std::memory_order_relaxed);tbSpecLast.store(mach_absolute_time(),std::memory_order_relaxed);
 }
 static void processChunk(Stream &s,float *data,UInt32 n) noexcept {
     for(UInt32 i=0;i<n;i++)for(int ch=0;ch<2;ch++) {
@@ -303,8 +316,9 @@ static void processChunk(Stream &s,float *data,UInt32 n) noexcept {
     if(s.effectsReady){
         uint64_t t=headTime.load(std::memory_order_acquire),center=headCenter.load();
         bool valid=settings.headTrack.load()&&t&&mach_absolute_time()-t<headFreshTicks;
-        if(s.headCenterGeneration!=center){valid=false;s.headCenterGeneration=center;}
-        s.effects->setHeadYaw(headYaw.load(std::memory_order_relaxed),valid);
+        // Recenter makes the next reading straight ahead without discarding tracking for a block.
+        if(s.headCenterGeneration!=center){s.effects->recenterHead();s.headCenterGeneration=center;}
+        s.effects->setHeadPose(headYaw.load(std::memory_order_relaxed),headPitch.load(std::memory_order_relaxed),valid);
         s.effects->process(data,n);
     }
     else for(UInt32 i=0;i<n*2;i++)data[i]=std::clamp(data[i],-0.89125f,0.89125f);
@@ -346,6 +360,7 @@ static OSStatus render(void *ctx,AudioUnitRenderActionFlags *flags,const AudioTi
                 scratch[2*i+ch]=fl?static_cast<float *>(b.mData)[idx]:timbre_pcm::read(static_cast<uint8_t *>(b.mData)+idx*bytes,f.mBitsPerChannel,bytes,high);
             }
             processChunk(s,scratch,n);
+            TBFeedSpectrum(scratch,n,f.mSampleRate);
             for(UInt32 i=0;i<n;i++)for(UInt32 ch=0;ch<2;ch++) {
                 auto &b=buffers->mBuffers[planar?ch:0];size_t idx=planar?(at+i):(2*(at+i)+ch);
                 if(fl)static_cast<float *>(b.mData)[idx]=scratch[2*i+ch];
@@ -353,6 +368,17 @@ static OSStatus render(void *ctx,AudioUnitRenderActionFlags *flags,const AudioTi
             }
         }
         processed.fetch_add(frames,std::memory_order_relaxed);lastProcessed=mach_absolute_time();lastReject=0;
+    } else if(!(flags && (*flags&kAudioUnitRenderAction_OutputIsSilence))) {
+        // EQ off: still feed the visualizer with the untouched audio.
+        float scratch[Chunk*2];
+        for(UInt32 at=0;at<frames;at+=Chunk) {
+            UInt32 n=std::min((UInt32)Chunk,frames-at);
+            for(UInt32 i=0;i<n;i++)for(UInt32 ch=0;ch<2;ch++) {
+                const auto &b=buffers->mBuffers[planar?ch:0];size_t idx=planar?(at+i):(2*(at+i)+ch);
+                scratch[2*i+ch]=fl?static_cast<float *>(b.mData)[idx]:timbre_pcm::read(static_cast<uint8_t *>(b.mData)+idx*bytes,f.mBitsPerChannel,bytes,high);
+            }
+            TBFeedSpectrum(scratch,n,f.mSampleRate);
+        }
     }
     s.rendering.clear(std::memory_order_release);return result;
 }
@@ -436,8 +462,11 @@ static void addedImage(const mach_header *header,intptr_t slide) {
     if(self.requested)return;self.requested=YES;self.status=@"Waiting for headphone motion";
     __weak TBHeadTracker *weakSelf=self;
     [self.manager startDeviceMotionUpdatesToQueue:self.queue withHandler:^(CMDeviceMotion *motion,NSError *error){
-        if(motion&&!error&&std::isfinite(motion.attitude.yaw)){
+        if(motion&&!error&&std::isfinite(motion.attitude.yaw)&&std::isfinite(motion.attitude.pitch)){
+            // Yaw: CoreMotion is positive turning left; the renderer wants positive = right.
+            // Pitch: positive = looking up. "Invert up/down" covers headphones reporting the opposite sign.
             headYaw.store(-motion.attitude.yaw*180.0/3.141592653589793,std::memory_order_relaxed);
+            headPitch.store(motion.attitude.pitch*180.0/3.141592653589793,std::memory_order_relaxed);
             headTime.store(mach_absolute_time(),std::memory_order_release);
         } else {
             headTime=0;
@@ -450,7 +479,7 @@ namespace {
 static void updateHeadTracking(){[[TBHeadTracker shared] update];}
 static NSString *headStatus(){
     uint64_t t=headTime.load(std::memory_order_acquire);
-    if(t&&mach_absolute_time()-t<headFreshTicks)return [NSString stringWithFormat:@"Tracking · yaw %.0f°",headYaw.load()];
+    if(t&&mach_absolute_time()-t<headFreshTicks)return [NSString stringWithFormat:@"Tracking · yaw %.0f° · pitch %.0f°",headYaw.load(),headPitch.load()];
     return [TBHeadTracker shared].status;
 }
 }
@@ -692,7 +721,8 @@ static timbre::EffectsParams parseEffects(NSDictionary *d) {
                  number(s, @"distance", 1, 0.3, 5), (int)number(s, @"mode", 0, 0, 1),
                  number(s, @"surround", 0.5, 0, 1), number(s, @"height", 0.3, 0, 1),
                  (int)number(s, @"hrtf", 1, 0, 1), number(s, @"room", 0.4, 0, 1),
-                 flag(s, @"headTracking", false), flag(s, @"headInvert", false)};
+                 flag(s, @"headTracking", false), flag(s, @"headInvert", false),
+                 flag(s, @"headInvertPitch", false)};
     NSDictionary *r = section(d, @"reverb");
     p.reverb = {flag(r, @"on", false), number(r, @"decay", 1.8, 0.2, 8), number(r, @"predelay", 20, 0, 200),
                 number(r, @"damping", 6000, 1000, 16000), number(r, @"width", 1, 0, 1), number(r, @"mix", 0.25, 0, 1)};
@@ -762,12 +792,64 @@ extern "C" void TBEmbeddedApplyConfig(NSDictionary *config) {
     settings.preamp=pre;
     timbre::EffectsParams fx=parseEffects(d);
     settings.comp=fx.comp.on;settings.crossfeed=fx.crossfeed.on;settings.spatial=fx.spatial.on;settings.reverb=fx.reverb.on;settings.stereo=fx.width.on;settings.width=fx.width.width;
-    settings.headTrack=fx.spatial.headTracking;settings.headInvert=fx.spatial.headInvert;
+    settings.headTrack=fx.spatial.headTracking;settings.headInvert=fx.spatial.headInvert;settings.headInvertPitch=fx.spatial.headInvertPitch;
     os_unfair_lock_lock(&fxLock);embeddedFX=fx;os_unfair_lock_unlock(&fxLock);fullConfigActive=true;
     settings.generation.fetch_add(1,std::memory_order_release);
     TBPublishWidgetStatus(d);
     dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();});
 }
+// 24 log-spaced bands, 30 Hz..16 kHz, smoothed over ~2 s so a widget snapshot shows the track's character.
+static float tbSpecLevels[24];
+static os_unfair_lock tbSpecLock=OS_UNFAIR_LOCK_INIT;
+static void TBAnalyzeSpectrum() {
+    static FFTSetup setup=vDSP_create_fftsetup(12,kFFTRadix2);  // 4096 points
+    static float window[4096];static bool ready=false;
+    if(!setup)return;
+    if(!ready){vDSP_hann_window(window,4096,vDSP_HANN_NORM);ready=true;}
+    mach_timebase_info_data_t tb;mach_timebase_info(&tb);
+    uint64_t last=tbSpecLast.load(std::memory_order_relaxed);
+    double age=last?(double)(mach_absolute_time()-last)*tb.numer/tb.denom/1e9:1e9;
+    float bands[24];
+    if(age>1.0){
+        os_unfair_lock_lock(&tbSpecLock);for(float &v:tbSpecLevels)v*=0.8f;os_unfair_lock_unlock(&tbSpecLock);
+        return;
+    }
+    float x[4096];uint64_t w=tbSpecWrite.load(std::memory_order_acquire);
+    for(size_t i=0;i<4096;i++)x[i]=tbSpecRing[(w-4096+i)&(TBSpecRing-1)]*window[i];
+    float re[2048],im[2048];DSPSplitComplex z={re,im};
+    vDSP_ctoz(reinterpret_cast<const DSPComplex *>(x),2,&z,1,2048);
+    vDSP_fft_zrip(setup,&z,1,12,kFFTDirection_Forward);
+    double rate=tbSpecRate.load(std::memory_order_relaxed);
+    for(int b=0;b<24;b++){
+        double lo=30*std::pow(16000.0/30,b/24.0),hi=30*std::pow(16000.0/30,(b+1)/24.0);
+        int i0=std::max(1,(int)(lo*4096/rate)),i1=std::min(2047,std::max(i0,(int)(hi*4096/rate)));
+        double e=0;for(int i=i0;i<=i1;i++)e+=re[i]*re[i]+im[i]*im[i];
+        e/=(i1-i0+1);
+        double db=10*std::log10(e/(4096.0*4096.0)+1e-12)+6;
+        bands[b]=(float)std::clamp((db+72)/62,0.0,1.0);
+    }
+    os_unfair_lock_lock(&tbSpecLock);
+    for(int b=0;b<24;b++)tbSpecLevels[b]+= (bands[b]-tbSpecLevels[b])*0.12f;
+    os_unfair_lock_unlock(&tbSpecLock);
+}
+static void TBStartSpectrumAnalyzer() {
+    static dispatch_source_t timer;
+    dispatch_queue_t q=dispatch_queue_create("com.soum91.timbre.spectrum",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));
+    timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,q);
+    dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,0),100*NSEC_PER_MSEC,20*NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(timer,^{TBAnalyzeSpectrum();});
+    dispatch_resume(timer);
+}
+// Called by the playback bridge's local widget endpoint.
+extern "C" NSDictionary *TimbreSpectrumSnapshot(void) {
+    NSMutableArray *a=[NSMutableArray arrayWithCapacity:24];
+    os_unfair_lock_lock(&tbSpecLock);for(float v:tbSpecLevels)[a addObject:@(std::round(v*1000)/1000)];os_unfair_lock_unlock(&tbSpecLock);
+    mach_timebase_info_data_t tb;mach_timebase_info(&tb);
+    uint64_t last=tbSpecLast.load(std::memory_order_relaxed);
+    double age=last?(double)(mach_absolute_time()-last)*tb.numer/tb.denom/1e9:1e9;
+    return @{@"bands":a,@"active":@(age<2.0),@"rate":@(tbSpecRate.load())};
+}
+extern "C" void TBEmbeddedRecenterHead(void) {headCenter.fetch_add(1);}
 extern "C" NSDictionary *TBEmbeddedStatus(void) {return @{@"frames":@(processed.load()),@"enabled":@(settings.on.load()),@"callbacks":@(callbacks.load())};}
 extern "C" UIViewController *TBEmbeddedDiagnosticsController(void) {
     TBNativeController *c=[[TBNativeController alloc] initWithStyle:UITableViewStyleInsetGrouped];
@@ -906,6 +988,7 @@ __attribute__((constructor)) static void launchTimbreNative() {
         tbDelete=(TBKDelete)dlsym(RTLD_DEFAULT,"SecItemDelete");
         tbDiscoverPrivateGroup();
         _dyld_register_func_for_add_image(tbObserveKeychain);
+        TBStartSpectrumAnalyzer();
         realSet=&AUGraphSetNodeInputCallback;realStart=&AUGraphStart;realDispose=&DisposeAUGraph;
         _dyld_register_func_for_add_image(addedImage);
         dispatch_async(dispatch_get_main_queue(),^{tbSharedLauncher=[TBLauncher new];[tbSharedLauncher attach];tbCaptureViewHierarchy();updateHeadTracking();[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[tbSharedLauncher attach];updateHeadTracking();tbCaptureViewHierarchy();}];});

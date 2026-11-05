@@ -5,6 +5,7 @@ import gzip
 import os
 import io
 import plistlib
+import secrets
 import struct
 import zipfile
 from pathlib import Path
@@ -218,6 +219,10 @@ def package(source, library, output, widget=None, keep_working_library=False,
             url_types.append({'CFBundleURLName': 'com.soum91.timbre.widget',
                               'CFBundleURLSchemes': [scheme]})
         plist['CFBundleURLTypes'] = url_types
+        if bridge:
+            # Per-install secret shared only by the app and its widget extension. The bridge's
+            # 127.0.0.1 widget endpoint rejects requests without it, so other apps cannot drive it.
+            plist['TimbreLocalToken'] = secrets.token_hex(16)
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.
         for key in ['UISupportedDevices', 'WKCompanionAppBundleIdentifier', 'WKWatchKitApp', 'NSExtension']:
@@ -252,6 +257,7 @@ def package(source, library, output, widget=None, keep_working_library=False,
                 if bridge:
                     widget_info['CFBundleIdentifier'] = experimental_id + '.TimbreWidgets'
                     widget_info['CFBundleDisplayName'] = 'Amazon Timbre Lab'
+                    widget_info['TimbreLocalToken'] = plist['TimbreLocalToken']
                 widget_root = root + 'PlugIns/TimbreWidgets.appex/'
                 for path in sorted(widget_dir.rglob('*')):
                     if not path.is_file():

@@ -1,6 +1,6 @@
 #include "TimbreDSP.hpp"
 #include "TimbreHRTF.h"
-#include "TimbreHRTFSphere.h"
+#include "TimbreHRTF3D.h"
 #include <cstring>
 #if defined(__APPLE__)
 #include <Accelerate/Accelerate.h>
@@ -116,7 +116,8 @@ Effects::Effects() {
   const size_t preCap = static_cast<size_t>(0.2 * fs) + 2, shortCap = static_cast<size_t>(0.001 * fs) + 2;
   const size_t upCap = static_cast<size_t>(0.03 * fs) + 2, histCap = hrtf::kMaxTaps - 1 + kBlock;
   const size_t limCap = static_cast<size_t>(0.002 * fs) + 2;
-  total += preCap + 4 * shortCap + 10 * upCap + kSources * histCap + 4 * kBlock + 3 * limCap;
+  const size_t slotCap = 2 * 2 * hrtf3d::kMaxTaps;  // two filter pairs per speaker
+  total += preCap + 4 * shortCap + 10 * upCap + kSources * (histCap + slotCap) + 4 * kBlock + 3 * limCap;
   memory_.assign(total, 0.0f);
   float* at = memory_.data();
   auto take = [&at](Line& l, size_t cap) { l.buf = at; l.cap = cap; l.len = 1; l.pos = 0; at += cap; };
@@ -128,7 +129,7 @@ Effects::Effects() {
   }
   take(pre_, preCap);
   for (auto& l : upDelay_) take(l, upCap);
-  for (auto& src : src_) { src.hist = at; at += histCap; }
+  for (auto& src : src_) { src.hist = at; at += histCap; src.slot = at; at += slotCap; }
   accL_ = at; at += kBlock; accR_ = at; at += kBlock; tmp_ = at; at += kBlock; tmp2_ = at; at += kBlock;
   take(limDelay_[0], limCap); take(limDelay_[1], limCap);
   limWindow_ = at; at += limCap;
@@ -375,8 +376,8 @@ void Effects::loadHRTF() noexcept {
   int r = 0;
   for (int i = 1; i < 4; i++) if (std::fabs(hrtf::kRates[i] - fs_) < std::fabs(hrtf::kRates[r] - fs_)) r = i;
   taps_ = hrtf::kTaps[r];
-  sphereRate_ = -1;
-  for (int i = 0; i < 2; i++) if (std::fabs(hrtf_sphere::kRates[i] - fs_) < 1000) sphereRate_ = i;
+  // The 3D tracking table covers the same four rates with the same tap counts as the static table.
+  sphereRate_ = hrtf3d::kTaps[r] == taps_ ? r : -1;
   const int front = std::clamp(static_cast<int>(std::lround((std::clamp(p_.spatial.angle, 10.0, 60.0) - hrtf::kFrontMin) / hrtf::kFrontStep)), 0, hrtf::kFrontCount - 1);
   // Sources: centre, front L/R, side L/R, rear L/R, top-front L/R. Odd indices are on the left.
   const int pos[kSources] = {hrtf::kCentre, front, front, hrtf::kSide, hrtf::kSide, hrtf::kRear, hrtf::kRear, hrtf::kTop, hrtf::kTop};
@@ -394,24 +395,52 @@ void Effects::loadHRTF() noexcept {
   imNorm_ = e > 1e-9 ? static_cast<float>(1.0 / std::sqrt(e)) : 1.0f;
 }
 
-// Direction of virtual speaker k relative to the listener's head, mapped to the full-circle table.
-bool Effects::sphereFilters(int k, double headYaw, const float** hR, const float** hL, int* key) const noexcept {
+void Effects::headRelative(double azimuth, double elevation, double yaw, double pitch,
+                           double* azOut, double* elOut) noexcept {
+  // Head frame: x right, y forward, z up. Undo the head's yaw (about z), then its pitch (about x).
+  const double d2r = kPi / 180.0;
+  const double az = azimuth * d2r, el = elevation * d2r, ps = yaw * d2r, th = pitch * d2r;
+  const double x = std::sin(az) * std::cos(el), y = std::cos(az) * std::cos(el), z = std::sin(el);
+  const double x1 = x * std::cos(ps) - y * std::sin(ps), y1 = x * std::sin(ps) + y * std::cos(ps);
+  const double y2 = y1 * std::cos(th) + z * std::sin(th), z2 = -y1 * std::sin(th) + z * std::cos(th);
+  *azOut = std::atan2(x1, y2) / d2r;
+  *elOut = std::asin(std::clamp(z2, -1.0, 1.0)) / d2r;
+}
+
+// Filters for virtual speaker k as heard by the listener's current head pose, from the measured KEMAR sphere.
+bool Effects::sphereFilters(int k, double yaw, double pitch, Source& src,
+                            const float** hR, const float** hL, int* key) noexcept {
   if (sphereRate_ < 0) return false;
   const double angle = std::clamp(p_.spatial.angle, 10.0, 60.0);
   const double azimuth[kSources] = {0, -angle, angle, -90, 90, -135, 135, -45, 45};
-  const bool high = k >= 7;
-  double rel = azimuth[k] - headYaw;
-  rel = std::fmod(rel + 540.0, 360.0) - 180.0;  // wrap to [-180, 180)
-  const double mag = std::fabs(rel);
-  const int idx = high ? hrtf_sphere::kLevelCount + std::clamp(static_cast<int>(std::lround(mag / hrtf_sphere::kHighStep)), 0, hrtf_sphere::kHighCount - 1)
-                       : std::clamp(static_cast<int>(std::lround(mag / hrtf_sphere::kLevelStep)), 0, hrtf_sphere::kLevelCount - 1);
-  const bool left = rel < 0 && idx != 0 && idx != hrtf_sphere::kLevelCount;
+  const double elevation = k >= 7 ? 40.0 : 0.0;
+  double az = 0, el = 0;
+  headRelative(azimuth[k], elevation, yaw, pitch, &az, &el);
+  const int ring = std::clamp(static_cast<int>(std::lround((el - hrtf3d::kRingFirst) / hrtf3d::kRingStep)), 0, hrtf3d::kRings - 1);
+  const int deg = std::clamp(static_cast<int>(std::lround(std::fabs(az))), 0, 180);
+  const int idx = hrtf3d::kMap[ring][deg];
+  const int measured = hrtf3d::kAzimuth[idx];
+  const bool left = az < 0 && measured != 0 && measured != 180;
+  const int newKey = idx * 2 + (left ? 1 : 0);
+  *key = newKey;
+  if (newKey == src.key) { *hR = src.hR; *hL = src.hL; return true; }
+  // Convert the measured int16 pair into the speaker's free slot (the other one may still be fading out).
   const int set = p_.spatial.hrtf == 0 ? 0 : 1;
-  const float* right = hrtf_sphere::kData[set][sphereRate_][idx][0];
-  const float* leftEar = hrtf_sphere::kData[set][sphereRate_][idx][1];
-  *hR = left ? leftEar : right;
-  *hL = left ? right : leftEar;
-  *key = idx * 2 + (left ? 1 : 0);
+  const short* right = nullptr; const short* leftEar = nullptr;
+  switch (sphereRate_) {
+    case 0: right = hrtf3d::kData0[set][idx][0]; leftEar = hrtf3d::kData0[set][idx][1]; break;
+    case 1: right = hrtf3d::kData1[set][idx][0]; leftEar = hrtf3d::kData1[set][idx][1]; break;
+    case 2: right = hrtf3d::kData2[set][idx][0]; leftEar = hrtf3d::kData2[set][idx][1]; break;
+    default: right = hrtf3d::kData3[set][idx][0]; leftEar = hrtf3d::kData3[set][idx][1]; break;
+  }
+  const int next = src.cur ^ 1;
+  float* outR = src.slot + next * 2 * hrtf3d::kMaxTaps;
+  float* outL = outR + hrtf3d::kMaxTaps;
+  const short* toR = left ? leftEar : right;
+  const short* toL = left ? right : leftEar;
+  for (size_t i = 0; i < taps_; i++) { outR[i] = toR[i] * hrtf3d::kScale; outL[i] = toL[i] * hrtf3d::kScale; }
+  *hR = outR; *hL = outL;
+  src.cur = next;
   return true;
 }
 
@@ -465,17 +494,30 @@ void Effects::immersive(float* s, size_t frames) noexcept {
       for (int k = 0; k < kSources; k++) src_[k].hist[hist + i] = feeds[k];
     }
     // Head tracking: follow the head, drift the reference slowly back to it (about 8 s) so the stage
-    // re-centres when you turn your whole body, like Apple's head-tracked mode.
+    // re-centres when you turn your whole body or change posture, like Apple's head-tracked mode.
+    // Short gaps in motion data hold the stage where it was instead of snapping it to the current head.
     const bool tracking = p_.spatial.headTracking && sphereRate_ >= 0;
-    double rel = 0;
-    if (!tracking || !headValid_) headSnapped_ = false;
+    const double blockSeconds = static_cast<double>(n) / fs_;
+    double rel = 0, relPitch = 0;
+    if (!tracking) headSnapped_ = false;
     if (tracking) {
-      const double yaw = headValid_ ? (p_.spatial.headInvert ? -headYaw_ : headYaw_) : headRef_;
-      if (headValid_ && !headSnapped_) { headRef_ = yaw; headSnapped_ = true; }  // first reading = straight ahead
-      double d = std::fmod(yaw - headRef_ + 540.0, 360.0) - 180.0;
-      headRef_ += d * std::min(1.0, static_cast<double>(n) / (8.0 * fs_));
-      headRef_ = std::fmod(headRef_ + 360.0, 360.0);
-      rel = std::fmod(yaw - headRef_ + 540.0, 360.0) - 180.0;
+      if (headValid_) {
+        lastYaw_ = p_.spatial.headInvert ? -headYaw_ : headYaw_;
+        lastPitch_ = std::clamp(p_.spatial.headInvertPitch ? -headPitch_ : headPitch_, -89.0, 89.0);
+        staleSeconds_ = 0;
+        if (!headSnapped_) { headRef_ = lastYaw_; headPitchRef_ = lastPitch_; headSnapped_ = true; }  // straight ahead
+      } else {
+        staleSeconds_ += blockSeconds;
+        if (staleSeconds_ > 3.0) headSnapped_ = false;  // headphones gone: re-centre on the next reading
+      }
+      if (headSnapped_) {
+        const double follow = std::min(1.0, blockSeconds / 8.0);
+        const double d = std::fmod(lastYaw_ - headRef_ + 540.0, 360.0) - 180.0;
+        headRef_ = std::fmod(headRef_ + d * follow + 360.0, 360.0);
+        headPitchRef_ += (lastPitch_ - headPitchRef_) * follow;
+        rel = std::fmod(lastYaw_ - headRef_ + 540.0, 360.0) - 180.0;
+        relPitch = lastPitch_ - headPitchRef_;
+      }
     }
     // Binaural render, crossfading a speaker over one block whenever its filter changes.
     std::fill(accL_, accL_ + n, 0.0f);
@@ -485,7 +527,7 @@ void Effects::immersive(float* s, size_t frames) noexcept {
       const float* x = src.hist + hist;
       const float *newR = src.hR, *newL = src.hL;
       int newKey = src.key;
-      if (tracking) sphereFilters(k, rel, &newR, &newL, &newKey);
+      if (tracking) sphereFilters(k, rel, relPitch, src, &newR, &newL, &newKey);
       const bool fade = newKey != src.key;
       for (int ear = 0; ear < 2; ear++) {
         float* acc = ear == 0 ? accR_ : accL_;
