@@ -33,7 +33,9 @@ def update(ipa, url, destination, repository, experimental=False):
         description = ("Side-by-side experimental Amazon Timbre Lab. Preserves the original "
                        "working app and its data; retains Timbre 19 DSP code with an "
                        "additive playback metadata bridge and player/EQ widgets. "
-                       "Separate Amazon sign-in may be required or rejected. "
+                       "Restores Amazon's native login/deep-link URL schemes in the Lab build. "
+                       "Both installed apps now claim Amazon callback schemes, so iOS may direct "
+                       "those links to either app. Separate sign-in may still be required or rejected. "
                        "Native Lock Screen media-card launch remains unverified. "
                        "Unsigned IPA: sign the parent app, widget extension, and "
                        "both embedded dylibs before installation.")

@@ -45,7 +45,7 @@ class WidgetPackagingTests(unittest.TestCase):
                     'CFBundleExecutable': 'AmazonMusic',
                     'CFBundleVersion': '123',
                     'CFBundleShortVersionString': '1.2',
-                    'CFBundleURLTypes': [{'CFBundleURLSchemes': ['amznmp3']}],
+                    'CFBundleURLTypes': [{'CFBundleURLSchemes': ['amznmp3', 'wazeamznmp3', 'timbre-amazon']}],
                     'UISupportedDevices': ['iPhone15,2']}
             with zipfile.ZipFile(source, 'w') as out:
                 out.writestr('Payload/AmazonMusic.app/Info.plist', plistlib.dumps(info))
@@ -112,7 +112,11 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertEqual(test_info['CFBundleDisplayName'], 'Amazon Timbre Lab')
                 self.assertTrue(any('timbre-amazon-lab' in t['CFBundleURLSchemes']
                                     for t in test_info['CFBundleURLTypes']))
-                self.assertFalse(any('amznmp3' in t['CFBundleURLSchemes']
+                self.assertTrue(any('amznmp3' in t['CFBundleURLSchemes']
+                                    for t in test_info['CFBundleURLTypes']))
+                self.assertTrue(any('wazeamznmp3' in t['CFBundleURLSchemes']
+                                    for t in test_info['CFBundleURLTypes']))
+                self.assertFalse(any('timbre-amazon' in t['CFBundleURLSchemes']
                                      for t in test_info['CFBundleURLTypes']))
             lab_feed = feed_writer.update(lab, 'https://github.com/soum91/example/releases/download/lab/example.ipa',
                                           root / 'source-lab.json', 'soum91/example', experimental=True)

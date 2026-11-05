@@ -169,7 +169,8 @@ def package(source, library, output, widget=None, keep_working_library=False,
         original_library = selected_library
         if bridge is not None:
             selected_library = attach_playback_bridge(original_library)
-        # Preserve Amazon identity; login uses this bundle ID. Signing is external.
+        # Stable builds preserve Amazon's bundle ID; Lab uses its own identity.
+        # Signing is external to the unsigned IPA packaging step.
         plist['CFBundleDisplayName'] = 'Amazon Timbre Lab' if bridge else 'Amazon Music Timbre'
         plist['CFBundleName'] = 'Amazon Timbre Lab' if bridge else 'Amazon Music Timbre'
         if bridge:
@@ -196,15 +197,18 @@ def package(source, library, output, widget=None, keep_working_library=False,
         if not isinstance(url_types, list):
             url_types = []
         if bridge:
-            # Do not steal Amazon's original callback/deep-link schemes from
-            # the installed working copy. Login in the Lab app may therefore
-            # need its own authorization flow and is explicitly experimental.
+            # Keep Amazon's native login/deep-link callback schemes in the Lab.
+            # Without amznmp3, authentication redirects cannot return to this
+            # app. The user explicitly accepts that two installed apps can
+            # compete for Amazon's schemes; the stable app and feed stay intact.
+            # Only drop our own stable-only widget callback to keep widgets
+            # unambiguous between the two builds.
             filtered = []
             for item in url_types:
                 if not isinstance(item, dict):
                     continue
                 schemes = [s for s in item.get('CFBundleURLSchemes', [])
-                           if s not in ('amznmp3', 'wazeamznmp3', 'timbre-amazon')]
+                           if s != 'timbre-amazon']
                 if schemes:
                     filtered.append({**item, 'CFBundleURLSchemes': schemes})
             url_types = filtered
