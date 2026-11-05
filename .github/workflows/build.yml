@@ -145,9 +145,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "lab-$TIMBRE_BUILD_VERSION" build/Amazon-Music-Timbre-Lab.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)" --notes "Experimental standalone bundle com.soum91.amazonmusictimbre.experimental. Restores Amazon's amznmp3 and wazeamznmp3 login/deep-link schemes, which may conflict with callbacks to the installed stable app. Original Amazon Music + Timbre remains installed and its app container is unchanged. Timbre 19 audio code is unmodified; its dylib loader header loads an additive player metadata bridge. Amazon may still reject authorization due to bundle ID change. Native Lock Screen media card launch behavior is not confirmed. Unsigned IPA; sign app, widget extension and both dylibs before installation. Published only to the Lab FlareStore feed." --prerelease --latest=false
-          LAB_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-$TIMBRE_BUILD_VERSION/Amazon-Music-Timbre-Lab.ipa"
-          python3 scripts/update_source.py build/Amazon-Music-Timbre-Lab.ipa "$LAB_URL" source-lab.json --repository "$GITHUB_REPOSITORY" --experimental
+          LAB_IPA="Amazon-Music-Timbre-Lab-$TIMBRE_BUILD_VERSION.ipa"
+          cp build/Amazon-Music-Timbre-Lab.ipa "build/$LAB_IPA"
+          cat > build/lab-notes.md <<NOTES
+          ## Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)
+
+          ### Changelog
+          - Fix Amazon sign-in ("Sign In Error", Exception #47, MAP Error Code 0). Amazon's own code is now given the original Amazon Music bundle ID inside the Lab app, so its login is no longer rejected for the Lab bundle ID. iOS and widgets still see the Lab ID, so it stays side by side with stable.
+
+          ### Notes
+          Standalone bundle com.soum91.amazonmusictimbre.experimental. Keeps Amazon's amznmp3 and wazeamznmp3 callback schemes, which can compete with the installed stable app. Stable Amazon Music + Timbre and its data are untouched. Timbre 19 audio code is unmodified; its dylib loads an additive player metadata bridge. Unsigned IPA; sign app, widget extension and both dylibs before installing. Published only to the Lab FlareStore feed.
+          NOTES
+          gh release create "lab-$TIMBRE_BUILD_VERSION" "build/$LAB_IPA" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)" --notes-file build/lab-notes.md --prerelease --latest=false
+          LAB_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-$TIMBRE_BUILD_VERSION/$LAB_IPA"
+          python3 scripts/update_source.py "build/$LAB_IPA" "$LAB_URL" source-lab.json --repository "$GITHUB_REPOSITORY" --experimental
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
           git add source-lab.json

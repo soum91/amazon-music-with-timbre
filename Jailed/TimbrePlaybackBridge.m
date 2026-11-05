@@ -9,6 +9,8 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <stdatomic.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <unistd.h>
@@ -113,6 +115,152 @@ static void TBInstallLabKeychainCompatibility(void) {
     // Install after Timbre 19's own add-image hook so our Lab-specific
     // fallback takes precedence without touching the old dylib's code.
     _dyld_register_func_for_add_image(TBLabObserveImage);
+}
+
+// ---------------------------------------------------------------------------
+// Amazon identity for Amazon's own code (Lab login fix).
+//
+// Stable logs in because it keeps com.amazon.mp3.AmazonCloudPlayer. The Lab
+// copy has its own bundle ID so it can sit beside stable, and Amazon's MAP
+// sign-in sends that ID to Amazon's servers, which reject it ("Exception #47,
+// MAP Error Code 0"). Keychain groups and URL schemes were never the cause.
+//
+// Here Amazon's code (the app executable and its embedded frameworks) is told
+// the original Amazon bundle ID. iOS, UIKit, Foundation, WidgetKit and our own
+// dylibs keep seeing the real Lab ID, so the separate container, defaults,
+// widget and side-by-side install are unchanged. Inactive in stable builds.
+// ---------------------------------------------------------------------------
+static NSString *const TBAmazonBundleID = @"com.amazon.mp3.AmazonCloudPlayer";
+#define TB_MAX_AMAZON_IMAGES 512
+static uintptr_t TBAmazonTextStart[TB_MAX_AMAZON_IMAGES];
+static uintptr_t TBAmazonTextEnd[TB_MAX_AMAZON_IMAGES];
+static _Atomic int TBAmazonImageCount;
+static NSBundle *TBMainBundle;
+static CFBundleRef TBMainCFBundle;
+static NSDictionary *TBAmazonInfo;
+static NSString *(*TBOrigBundleIdentifier)(id, SEL);
+static NSDictionary *(*TBOrigInfoDictionary)(id, SEL);
+static id (*TBOrigObjectForInfoKey)(id, SEL, NSString *);
+static CFStringRef (*TBRealCFBundleGetIdentifier)(CFBundleRef);
+static CFDictionaryRef (*TBRealCFBundleGetInfoDictionary)(CFBundleRef);
+static CFTypeRef (*TBRealCFBundleGetValue)(CFBundleRef, CFStringRef);
+
+static BOOL TBIsAmazonImagePath(const char *path) {
+    return path && strstr(path, "/AmazonCloudPlayer.app/") &&
+        !strstr(path, "/PlugIns/") &&
+        !strstr(path, "TimbreNative-FlareStore.dylib") &&
+        !strstr(path, "TimbrePlaybackBridge.dylib");
+}
+
+static BOOL TBCallerIsAmazon(const void *address) {
+    uintptr_t a = (uintptr_t)address;
+    int count = atomic_load_explicit(&TBAmazonImageCount, memory_order_acquire);
+    for (int i = 0; i < count; i++) {
+        if (a >= TBAmazonTextStart[i] && a < TBAmazonTextEnd[i]) return YES;
+    }
+    return NO;
+}
+
+static NSDictionary *TBAmazonInfoDictionary(NSDictionary *real) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableDictionary *info = [real mutableCopy] ?: [NSMutableDictionary dictionary];
+        info[@"CFBundleIdentifier"] = TBAmazonBundleID;
+        TBAmazonInfo = [info copy];
+    });
+    return TBAmazonInfo;
+}
+
+static NSString *TBBundleIdentifier(id bundle, SEL selector) {
+    if (bundle == TBMainBundle && TBCallerIsAmazon(__builtin_return_address(0)))
+        return TBAmazonBundleID;
+    return TBOrigBundleIdentifier(bundle, selector);
+}
+
+static NSDictionary *TBInfoDictionary(id bundle, SEL selector) {
+    NSDictionary *real = TBOrigInfoDictionary(bundle, selector);
+    if (bundle == TBMainBundle && TBCallerIsAmazon(__builtin_return_address(0)))
+        return TBAmazonInfoDictionary(real);
+    return real;
+}
+
+static id TBObjectForInfoKey(id bundle, SEL selector, NSString *key) {
+    if (bundle == TBMainBundle && [key isEqualToString:@"CFBundleIdentifier"] &&
+        TBCallerIsAmazon(__builtin_return_address(0)))
+        return TBAmazonBundleID;
+    return TBOrigObjectForInfoKey(bundle, selector, key);
+}
+
+// The C variants are rebound only inside Amazon images, so no caller check.
+static CFStringRef TBCFBundleGetIdentifier(CFBundleRef bundle) {
+    if (bundle && bundle == TBMainCFBundle) return (__bridge CFStringRef)TBAmazonBundleID;
+    return TBRealCFBundleGetIdentifier(bundle);
+}
+
+static CFDictionaryRef TBCFBundleGetInfoDictionary(CFBundleRef bundle) {
+    CFDictionaryRef real = TBRealCFBundleGetInfoDictionary(bundle);
+    if (bundle && bundle == TBMainCFBundle)
+        return (__bridge CFDictionaryRef)TBAmazonInfoDictionary((__bridge NSDictionary *)real);
+    return real;
+}
+
+static CFTypeRef TBCFBundleGetValue(CFBundleRef bundle, CFStringRef key) {
+    if (bundle && bundle == TBMainCFBundle && key &&
+        CFEqual(key, kCFBundleIdentifierKey))
+        return (__bridge CFTypeRef)TBAmazonBundleID;
+    return TBRealCFBundleGetValue(bundle, key);
+}
+
+static void TBObserveAmazonIdentityImage(const struct mach_header *header, intptr_t slide) {
+    Dl_info info = {0};
+    if (!dladdr(header, &info) || !TBIsAmazonImagePath(info.dli_fname)) return;
+    if (header->magic != MH_MAGIC_64) return;
+    const struct mach_header_64 *h = (const struct mach_header_64 *)header;
+    const uint8_t *cursor = (const uint8_t *)(h + 1);
+    for (uint32_t i = 0; i < h->ncmds; i++) {
+        const struct load_command *lc = (const struct load_command *)cursor;
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
+            if (strncmp(seg->segname, "__TEXT", 16) == 0) {
+                int index = atomic_load_explicit(&TBAmazonImageCount, memory_order_relaxed);
+                if (index < TB_MAX_AMAZON_IMAGES) {
+                    TBAmazonTextStart[index] = (uintptr_t)(seg->vmaddr + slide);
+                    TBAmazonTextEnd[index] = (uintptr_t)(seg->vmaddr + seg->vmsize + slide);
+                    atomic_store_explicit(&TBAmazonImageCount, index + 1, memory_order_release);
+                }
+                break;
+            }
+        }
+        cursor += lc->cmdsize;
+    }
+    struct rebinding hooks[] = {
+        {"CFBundleGetIdentifier", (void *)TBCFBundleGetIdentifier, NULL},
+        {"CFBundleGetInfoDictionary", (void *)TBCFBundleGetInfoDictionary, NULL},
+        {"CFBundleGetValueForInfoDictionaryKey", (void *)TBCFBundleGetValue, NULL}
+    };
+    rebind_symbols_image((void *)header, slide, hooks, 3);
+}
+
+static void TBSwap(SEL selector, IMP replacement, IMP *original) {
+    Method method = class_getInstanceMethod(NSBundle.class, selector);
+    if (!method) return;
+    *original = method_setImplementation(method, replacement);
+}
+
+static void TBInstallAmazonIdentity(void) {
+    TBMainBundle = NSBundle.mainBundle;
+    TBMainCFBundle = CFBundleGetMainBundle();
+    NSString *real = TBMainBundle.bundleIdentifier;
+    // Stable already is Amazon's bundle ID; only the side-by-side Lab needs this.
+    if (!real || [real isEqualToString:TBAmazonBundleID]) return;
+    TBRealCFBundleGetIdentifier = CFBundleGetIdentifier;
+    TBRealCFBundleGetInfoDictionary = CFBundleGetInfoDictionary;
+    TBRealCFBundleGetValue = CFBundleGetValueForInfoDictionaryKey;
+    TBSwap(@selector(bundleIdentifier), (IMP)TBBundleIdentifier, (IMP *)&TBOrigBundleIdentifier);
+    TBSwap(@selector(infoDictionary), (IMP)TBInfoDictionary, (IMP *)&TBOrigInfoDictionary);
+    TBSwap(@selector(objectForInfoDictionaryKey:), (IMP)TBObjectForInfoKey, (IMP *)&TBOrigObjectForInfoKey);
+    // Called immediately for every image already loaded, then for later ones.
+    _dyld_register_func_for_add_image(TBObserveAmazonIdentityImage);
 }
 
 static void TBResolveMediaRemote(void) {
@@ -315,6 +463,8 @@ static void TBInitializePlaybackBridge(void) {
     // Login may hit the keychain before UIKit processes the main queue.
     // Register this after the preserved Timbre 19 constructor, at load time.
     TBInstallLabKeychainCompatibility();
+    // Must be live before Amazon's sign-in code first asks for its identity.
+    TBInstallAmazonIdentity();
     dispatch_async(dispatch_get_main_queue(), ^{
         TBStateLock = [NSObject new];
         TBStartLocalServer();
