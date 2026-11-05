@@ -195,6 +195,19 @@ def package(source, library, output, widget=None, keep_working_library=False,
         url_types = plist.get('CFBundleURLTypes', [])
         if not isinstance(url_types, list):
             url_types = []
+        if bridge:
+            # Do not steal Amazon's original callback/deep-link schemes from
+            # the installed working copy. Login in the Lab app may therefore
+            # need its own authorization flow and is explicitly experimental.
+            filtered = []
+            for item in url_types:
+                if not isinstance(item, dict):
+                    continue
+                schemes = [s for s in item.get('CFBundleURLSchemes', [])
+                           if s not in ('amznmp3', 'wazeamznmp3', 'timbre-amazon')]
+                if schemes:
+                    filtered.append({**item, 'CFBundleURLSchemes': schemes})
+            url_types = filtered
         scheme = 'timbre-amazon-lab' if bridge else 'timbre-amazon'
         if not any(scheme in item.get('CFBundleURLSchemes', [])
                    for item in url_types if isinstance(item, dict)):

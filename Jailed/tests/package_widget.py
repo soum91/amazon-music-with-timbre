@@ -41,7 +41,7 @@ class WidgetPackagingTests(unittest.TestCase):
                     'CFBundleExecutable': 'AmazonMusic',
                     'CFBundleVersion': '123',
                     'CFBundleShortVersionString': '1.2',
-                    'CFBundleURLTypes': [{'CFBundleURLSchemes': ['amazonmusic']}],
+                    'CFBundleURLTypes': [{'CFBundleURLSchemes': ['amznmp3']}],
                     'UISupportedDevices': ['iPhone15,2']}
             with zipfile.ZipFile(source, 'w') as out:
                 out.writestr('Payload/AmazonMusic.app/Info.plist', plistlib.dumps(info))
@@ -69,7 +69,7 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertEqual(extension['CFBundleShortVersionString'], '26.37.22')
                 self.assertEqual(extension['CFBundleIdentifier'], result['CFBundleIdentifier'] + '.TimbreWidgets')
                 self.assertTrue(any('timbre-amazon' in u['CFBundleURLSchemes'] for u in result['CFBundleURLTypes']))
-                self.assertTrue(any('amazonmusic' in u['CFBundleURLSchemes'] for u in result['CFBundleURLTypes']))
+                self.assertTrue(any('amznmp3' in u['CFBundleURLSchemes'] for u in result['CFBundleURLTypes']))
                 self.assertNotIn(app + 'PlugIns/Old.appex/Info.plist', names)
                 self.assertIn(app + 'PlugIns/TimbreWidgets.appex/TimbreWidgets', names)
 
@@ -108,6 +108,8 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertEqual(test_info['CFBundleDisplayName'], 'Amazon Timbre Lab')
                 self.assertTrue(any('timbre-amazon-lab' in t['CFBundleURLSchemes']
                                     for t in test_info['CFBundleURLTypes']))
+                self.assertFalse(any('amznmp3' in t['CFBundleURLSchemes']
+                                     for t in test_info['CFBundleURLTypes']))
 
             updated = root / 'updated.ipa'
             replacement = bytes.fromhex('cffaedfe') + b'TimbreEmbeddedBuild21 + new code'
