@@ -118,8 +118,7 @@ def package(source, library, output, widget=None, keep_working_library=False,
         raise ValueError('Invalid Timbre library')
     if b'TimbreEmbeddedBuild21' not in lib:
         raise ValueError('Expected GUI 21 library marker; refusing a stale compiled library')
-    if experimental_bridge and not keep_working_library:
-        raise ValueError('Experimental side-by-side build must retain the working Timbre 19 library')
+    # The Lab may ship either the preserved Timbre 19 library or a source-built one; stable is unaffected.
     bridge = Path(experimental_bridge).read_bytes() if experimental_bridge else None
     if bridge is not None and bridge[:4] != b'\xcf\xfa\xed\xfe':
         raise ValueError('Invalid arm64 playback bridge')
