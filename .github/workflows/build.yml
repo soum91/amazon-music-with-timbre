@@ -75,7 +75,7 @@ jobs:
       - name: Build side-by-side experimental player bridge and widget
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -dynamiclib Jailed/TimbrePlaybackBridge.m -framework Foundation -framework UIKit -framework MediaPlayer -install_name @rpath/TimbrePlaybackBridge.dylib -o build/TimbrePlaybackBridge.dylib
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -dynamiclib Jailed/TimbrePlaybackBridge.m Jailed/fishhook.c -framework Foundation -framework UIKit -framework MediaPlayer -framework Security -install_name @rpath/TimbrePlaybackBridge.dylib -o build/TimbrePlaybackBridge.dylib
           file build/TimbrePlaybackBridge.dylib
           xcodebuild -quiet -project Widget/TimbreWidgets.xcodeproj -target TimbreWidgets -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CONFIGURATION_BUILD_DIR="$PWD/build/widget-lab-products" SWIFT_ACTIVE_COMPILATION_CONDITIONS=TIMBRE_EXPERIMENTAL CODE_SIGNING_ALLOWED=NO build
           test -f build/widget-lab-products/TimbreWidgets.appex/TimbreWidgets

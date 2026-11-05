@@ -5,12 +5,15 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <MediaPlayer/MediaPlayer.h>
+#import <Security/Security.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#import <mach-o/dyld.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <unistd.h>
 #import <string.h>
+#import "fishhook.h"
 
 static void (*TBOriginalSetNowPlayingInfo)(id, SEL, NSDictionary *);
 static NSString *const TBSharedGroup = @"group.com.soum91.amazon.timbre";
@@ -22,6 +25,95 @@ static BOOL TBInstalledURLHook;
 static IMP TBPreviousSceneOpenURL;
 static Class TBHookedSceneClass;
 static Boolean (*TBRemoteSend)(int, id);
+
+// Timbre 19's original keychain hook understands the original Amazon bundle
+// group, but its allowlist predates our side-by-side Lab bundle ID. Route only
+// denied access-group lookups into this Lab app's *own* signing-granted default
+// group. This never reads the stable app's keychain or its account data.
+typedef OSStatus (*TBKeyCopy)(CFDictionaryRef, CFTypeRef *);
+typedef OSStatus (*TBKeyAdd)(CFDictionaryRef, CFTypeRef *);
+typedef OSStatus (*TBKeyUpdate)(CFDictionaryRef, CFDictionaryRef);
+typedef OSStatus (*TBKeyDelete)(CFDictionaryRef);
+static TBKeyCopy TBRealKeyCopy;
+static TBKeyAdd TBRealKeyAdd;
+static TBKeyUpdate TBRealKeyUpdate;
+static TBKeyDelete TBRealKeyDelete;
+static NSString *const TBAmazonGroup = @"J7P34ALZ5R.com.amazon.mp3.AmazonCloudPlayer";
+static NSString *const TBLabSuffix = @".com.soum91.amazonmusictimbre.experimental";
+
+static NSDictionary *TBLabKeychainRetry(CFDictionaryRef query) {
+    if (!query || CFGetTypeID(query) != CFDictionaryGetTypeID()) return nil;
+    NSDictionary *q = (__bridge NSDictionary *)query;
+    NSString *group = q[@"agrp"];
+    if (![group isKindOfClass:NSString.class]) return nil;
+    BOOL lab = [group hasSuffix:TBLabSuffix];
+    BOOL original = [group isEqualToString:TBAmazonGroup];
+    BOOL shared = [group isEqualToString:[TBAmazonGroup stringByAppendingString:@".Shared"]];
+    BOOL locale = [group isEqualToString:@"group.amazonmusic.prod.notificationlocale"];
+    if (!lab && !original && !shared && !locale) return nil;
+    NSMutableDictionary *mapped = [q mutableCopy];
+    [mapped removeObjectForKey:@"agrp"]; // default group is granted by the signer
+    if (shared || locale) {
+        if (![q[@"class"] isEqualToString:@"genp"]) return nil;
+        NSString *service = q[@"svce"];
+        if (!service && locale) service = @"";
+        if (![service isKindOfClass:NSString.class]) return nil;
+        mapped[@"svce"] = [NSString stringWithFormat:@"Timbre.%@::%@",
+                            shared ? @"shared" : @"notification-locale", service];
+    }
+    return mapped;
+}
+
+static OSStatus TBLabCopy(CFDictionaryRef query, CFTypeRef *result) {
+    OSStatus status = TBRealKeyCopy ? TBRealKeyCopy(query, result) : -4;
+    if (status != -34018) return status;
+    NSDictionary *retry = TBLabKeychainRetry(query);
+    return retry && TBRealKeyCopy ? TBRealKeyCopy((__bridge CFDictionaryRef)retry, result) : status;
+}
+static OSStatus TBLabAdd(CFDictionaryRef query, CFTypeRef *result) {
+    OSStatus status = TBRealKeyAdd ? TBRealKeyAdd(query, result) : -4;
+    if (status != -34018) return status;
+    NSDictionary *retry = TBLabKeychainRetry(query);
+    return retry && TBRealKeyAdd ? TBRealKeyAdd((__bridge CFDictionaryRef)retry, result) : status;
+}
+static OSStatus TBLabUpdate(CFDictionaryRef query, CFDictionaryRef attrs) {
+    OSStatus status = TBRealKeyUpdate ? TBRealKeyUpdate(query, attrs) : -4;
+    if (status != -34018) return status;
+    NSDictionary *retry = TBLabKeychainRetry(query);
+    return retry && TBRealKeyUpdate ? TBRealKeyUpdate((__bridge CFDictionaryRef)retry, attrs) : status;
+}
+static OSStatus TBLabDelete(CFDictionaryRef query) {
+    OSStatus status = TBRealKeyDelete ? TBRealKeyDelete(query) : -4;
+    if (status != -34018) return status;
+    NSDictionary *retry = TBLabKeychainRetry(query);
+    return retry && TBRealKeyDelete ? TBRealKeyDelete((__bridge CFDictionaryRef)retry) : status;
+}
+
+static void TBLabObserveImage(const struct mach_header *header, intptr_t slide) {
+    if (!TBRealKeyCopy || !TBRealKeyAdd || !TBRealKeyUpdate || !TBRealKeyDelete) return;
+    Dl_info info = {0};
+    if (!dladdr(header, &info) || !info.dli_fname) return;
+    if (!strstr(info.dli_fname, "/AmazonCloudPlayer.app/") ||
+        strstr(info.dli_fname, "TimbreNative-FlareStore.dylib") ||
+        strstr(info.dli_fname, "TimbrePlaybackBridge.dylib")) return;
+    struct rebinding hooks[] = {
+        {"SecItemCopyMatching", (void *)TBLabCopy, NULL},
+        {"SecItemAdd", (void *)TBLabAdd, NULL},
+        {"SecItemUpdate", (void *)TBLabUpdate, NULL},
+        {"SecItemDelete", (void *)TBLabDelete, NULL}
+    };
+    rebind_symbols_image((void *)header, slide, hooks, 4);
+}
+
+static void TBInstallLabKeychainCompatibility(void) {
+    TBRealKeyCopy = (TBKeyCopy)dlsym(RTLD_DEFAULT, "SecItemCopyMatching");
+    TBRealKeyAdd = (TBKeyAdd)dlsym(RTLD_DEFAULT, "SecItemAdd");
+    TBRealKeyUpdate = (TBKeyUpdate)dlsym(RTLD_DEFAULT, "SecItemUpdate");
+    TBRealKeyDelete = (TBKeyDelete)dlsym(RTLD_DEFAULT, "SecItemDelete");
+    // Install after Timbre 19's own add-image hook so our Lab-specific
+    // fallback takes precedence without touching the old dylib's code.
+    _dyld_register_func_for_add_image(TBLabObserveImage);
+}
 
 static void TBResolveMediaRemote(void) {
     static dispatch_once_t once;
@@ -221,6 +313,7 @@ static void TBSetNowPlayingInfo(id center, SEL selector, NSDictionary *info) {
 __attribute__((constructor))
 static void TBInitializePlaybackBridge(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        TBInstallLabKeychainCompatibility();
         TBStateLock = [NSObject new];
         TBStartLocalServer();
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification
