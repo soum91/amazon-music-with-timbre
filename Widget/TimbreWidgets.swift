@@ -15,6 +15,7 @@ private struct Player {
     let album: String
     let artwork: UIImage?
     let playing: Bool
+    let controlsReady: Bool
 
     init?(_ dictionary: [String: Any]) {
         guard let name = dictionary["title"] as? String, !name.isEmpty else { return nil }
@@ -22,6 +23,7 @@ private struct Player {
         artist = dictionary["artist"] as? String ?? "Unknown artist"
         album = dictionary["album"] as? String ?? ""
         playing = dictionary["playing"] as? Bool ?? false
+        controlsReady = dictionary["controlsReady"] as? Bool ?? false
         if let base64 = dictionary["artworkJPEG"] as? String,
            let bytes = Data(base64Encoded: base64) {
             artwork = UIImage(data: bytes)
@@ -125,7 +127,7 @@ private struct PlayerView: View {
                     .font(.system(size: 12)).lineLimit(1)
                     .foregroundStyle(.white.opacity(0.7))
                 Spacer(minLength: 0)
-                if let player = entry.player {
+                if let player = entry.player, player.controlsReady {
                     // Commands are deep links; the host app must implement them.
                     HStack(spacing: 24) {
                         Link(destination: Config.playerLink("previous")) {
