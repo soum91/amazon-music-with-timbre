@@ -279,6 +279,8 @@ static void TBResolveMediaRemote(void) {
 static BOOL TBSendMediaCommand(NSInteger command);
 static void TBRequestWidgetReload(NSString *kind);
 
+static NSUInteger TBStateRequests, TBRejectedRequests;
+
 static NSString *TBLocalToken(void) {
     static NSString *token;
     static dispatch_once_t once;
@@ -523,7 +525,6 @@ static void TBRequestWidgetReload(NSString *kind) {
 }
 
 // Shown in Timbre > Diagnostics: endpoint traffic plus what WidgetKit reports for this app.
-static NSUInteger TBStateRequests, TBRejectedRequests;
 NSString *TBBridgeWidgetDiagnostics(void) {
     char *(*report)(void) = (char *(*)(void))dlsym(RTLD_DEFAULT, "TBWidgetReport");
     void (*refresh)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "TBRefreshWidgetReport");
