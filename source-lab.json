@@ -19,6 +19,15 @@
       "category": "music",
       "versions": [
         {
+          "version": "26.37.41",
+          "buildVersion": "26.37.41",
+          "date": "2026-11-05T14:53:56Z",
+          "localizedDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Restores Amazon's native login/deep-link URL schemes in the Lab build. Both installed apps now claim Amazon callback schemes, so iOS may direct those links to either app. Separate sign-in may still be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.41/Amazon-Music-Timbre-Lab-26.37.41.ipa",
+          "size": 177170996,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "26.37.40",
           "buildVersion": "26.37.40",
           "date": "2026-11-05T14:48:00Z",
@@ -73,12 +82,12 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.40",
-      "buildVersion": "26.37.40",
-      "versionDate": "2026-11-05T14:48:00Z",
+      "version": "26.37.41",
+      "buildVersion": "26.37.41",
+      "versionDate": "2026-11-05T14:53:56Z",
       "versionDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Restores Amazon's native login/deep-link URL schemes in the Lab build. Both installed apps now claim Amazon callback schemes, so iOS may direct those links to either app. Separate sign-in may still be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.40/Amazon-Music-Timbre-Lab-26.37.40.ipa",
-      "size": 177169541
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.41/Amazon-Music-Timbre-Lab-26.37.41.ipa",
+      "size": 177170996
     }
   ],
   "news": []
