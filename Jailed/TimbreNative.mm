@@ -635,7 +635,7 @@ static NSString *tbAudioFormatReport(void){
     }]];}[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem;[self presentViewController:a animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {return self.pages.selectedSegmentIndex==0?2:1;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?11:section==1?2:section==2?settings.count.load()+1:9;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {section=[self sourceSection:section];return section==0?12:section==1?2:section==2?settings.count.load()+1:9;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {section=[self sourceSection:section];return @[@"Playback diagnostics",@"Master",@"Parametric EQ · tap to edit",@"Effects"][section];}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     section=[self sourceSection:section];
@@ -654,6 +654,7 @@ static NSString *tbAudioFormatReport(void){
         if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild21";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
+        if(r==11){cell.textLabel.text=@"Widgets";NSString *(*w)(void)=(NSString *(*)(void))dlsym(RTLD_DEFAULT,"TBBridgeWidgetDiagnostics");cell.detailTextLabel.text=w?w():@"Widget bridge not loaded (stable build)";cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==3){cell.textLabel.text=@"Login storage diagnostics";cell.detailTextLabel.text=tbKeyStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==0){cell.textLabel.text=hookedImages.load()?@"Native audio engine detected":@"Waiting for native audio engine";cell.detailTextLabel.text=[NSString stringWithFormat:@"Registrations: %llu · callbacks: %llu",(unsigned long long)registrations.load(),(unsigned long long)callbacks.load()];}
@@ -825,8 +826,11 @@ static void TBAnalyzeSpectrum() {
         int i0=std::max(1,(int)(lo*4096/rate)),i1=std::min(2047,std::max(i0,(int)(hi*4096/rate)));
         double e=0;for(int i=i0;i<=i1;i++)e+=re[i]*re[i]+im[i]*im[i];
         e/=(i1-i0+1);
-        double db=10*std::log10(e/(4096.0*4096.0)+1e-12)+6;
-        bands[b]=(float)std::clamp((db+72)/62,0.0,1.0);
+        // +4.5 dB/octave around 1 kHz: music falls off with frequency, so without this the top half
+        // of the spectrum always reads empty. Same idea as the tilt in typical audio analyzers.
+        double centre=std::sqrt(lo*hi);
+        double db=10*std::log10(e/(4096.0*4096.0)+1e-12)+6+4.5*std::log2(centre/1000.0);
+        bands[b]=(float)std::clamp((db+66)/58,0.0,1.0);
     }
     os_unfair_lock_lock(&tbSpecLock);
     for(int b=0;b<24;b++)tbSpecLevels[b]+= (bands[b]-tbSpecLevels[b])*0.12f;

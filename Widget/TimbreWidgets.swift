@@ -200,7 +200,18 @@ private struct Entry: TimelineEntry {
                      eq: eq, spectrum: spectrum, live: true)
     }
 
+    /// Last state the app actually answered with, kept in the extension's own defaults (no App Group needed).
+    static func lastGood() -> Entry? {
+        guard let data = UserDefaults.standard.data(forKey: "TimbreWidget.lastState.v1"),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let saved = (json["time"] as? NSNumber)?.doubleValue ?? 0
+        let entry = Entry.from(json)
+        return Entry(date: saved > 0 ? Date(timeIntervalSince1970: saved) : .now,
+                     player: entry.player, eq: entry.eq, spectrum: entry.spectrum, live: false)
+    }
+
     static func cached() -> Entry {
+        if let last = lastGood() { return last }
         let store = UserDefaults(suiteName: Config.group)
         let playback = store?.dictionary(forKey: "TimbreWidget.nowPlaying.v1")
         var eq = EQState()
@@ -231,7 +242,15 @@ private enum Endpoint {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
     static func entry() async -> Entry {
-        if let json = await request("/state") { return .from(json) }
+        // The app answers from a cache, but it can be busy for a moment; try twice before falling back.
+        for attempt in 0..<2 {
+            if let json = await request("/state", timeout: attempt == 0 ? 2.5 : 4) {
+                if let data = try? JSONSerialization.data(withJSONObject: json) {
+                    UserDefaults.standard.set(data, forKey: "TimbreWidget.lastState.v1")
+                }
+                return .from(json)
+            }
+        }
         return .cached()
     }
 }
@@ -245,9 +264,15 @@ private struct Provider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
         Task {
             let entry = await Endpoint.entry()
-            // The app pushes reloads on track, play/pause and EQ changes; this is only the fallback.
-            let next: TimeInterval = entry.player?.playing == true ? 120 : 900
-            completion(Timeline(entries: [entry], policy: .after(.now.addingTimeInterval(next))))
+            // The app asks for reloads on track, play/pause and EQ changes. Independently of that, wake up
+            // right after the current track should end so the next song shows up even if those requests
+            // are throttled, and otherwise every two minutes while music plays.
+            var next = Date.now.addingTimeInterval(entry.player?.playing == true ? 120 : 900)
+            if let end = entry.player?.interval?.upperBound, end.timeIntervalSinceNow < 600 {
+                next = min(next, end.addingTimeInterval(2))
+            }
+            if !entry.live { next = min(next, .now.addingTimeInterval(60)) }
+            completion(Timeline(entries: [entry], policy: .after(next)))
         }
     }
 }
@@ -465,6 +490,10 @@ private struct PlayerView: View {
                 Text(title).font(.system(size: 16, weight: .bold)).lineLimit(1)
                 Text(artist).font(.system(size: 12)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
                 if let player = entry.player { TrackProgress(player: player).padding(.vertical, 4) }
+                if !entry.live && entry.player != nil {
+                    Text("Last seen \(entry.date.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 9)).foregroundStyle(Color.white.opacity(0.45))
+                }
                 Spacer(minLength: 0)
                 if entry.player != nil {
                     Transport(player: entry.player, size: 15).frame(maxWidth: .infinity)

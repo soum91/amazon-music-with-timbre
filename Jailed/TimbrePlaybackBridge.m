@@ -296,10 +296,22 @@ static id TBOnMain(id (^block)(void)) {
     return result;
 }
 
-static NSDictionary *TBEQState(void) {
+// EQ state is cached and refreshed on the main queue, so a widget request never waits for Amazon's UI thread.
+static NSDictionary *TBCachedEQ;
+static void TBRefreshEQCache(void) {
     NSDictionary *(*snapshot)(void) = (NSDictionary *(*)(void))dlsym(RTLD_DEFAULT, "TBEmbeddedWidgetSnapshot");
-    if (!snapshot) return @{};
-    return TBOnMain(^id { return snapshot() ?: @{}; });
+    if (!snapshot) return;
+    void (^work)(void) = ^{
+        NSDictionary *eq = snapshot() ?: @{};
+        @synchronized(TBStateLock) { TBCachedEQ = eq; }
+    };
+    if (NSThread.isMainThread) work(); else dispatch_async(dispatch_get_main_queue(), work);
+}
+static NSDictionary *TBEQState(void) {
+    NSDictionary *eq;
+    @synchronized(TBStateLock) { eq = TBCachedEQ; }
+    if (!eq) { TBRefreshEQCache(); return @{}; }
+    return eq;
 }
 
 static NSDictionary *TBSpectrumState(void) {
@@ -320,7 +332,7 @@ static BOOL TBRunWidgetCommand(NSString *command) {
     if ([command isEqualToString:@"player/previous"]) return TBSendMediaCommand(5);
     BOOL (*run)(NSString *) = (BOOL (*)(NSString *))dlsym(RTLD_DEFAULT, "TBEmbeddedWidgetCommand");
     if (!run) return NO;
-    NSNumber *ok = TBOnMain(^id { return @(run(command)); });
+    NSNumber *ok = TBOnMain(^id { BOOL done = run(command); TBRefreshEQCache(); return @(done); });
     if (ok.boolValue) TBRequestWidgetReload(@"com.soum91.timbre.eq");
     return ok.boolValue;
 }
@@ -366,12 +378,14 @@ static void TBRespondToLocalClient(int client) {
                 sent = [[line substringFromIndex:15] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
         }
         if (![sent isEqualToString:token]) {
+            TBRejectedRequests++;
             TBSendResponse(client, 403, [@"{}" dataUsingEncoding:NSUTF8StringEncoding]);
             close(client);
             return;
         }
     }
     id body = nil;
+    TBStateRequests++;
     if ([path isEqualToString:@"/player"]) {
         @synchronized(TBStateLock) { body = [TBLatestPlayerState copy] ?: @{}; }
     } else if ([path isEqualToString:@"/state"]) {
@@ -508,6 +522,18 @@ static void TBRequestWidgetReload(NSString *kind) {
     dispatch_async(dispatch_get_main_queue(), ^{ reload(kind.UTF8String); });
 }
 
+// Shown in Timbre > Diagnostics: endpoint traffic plus what WidgetKit reports for this app.
+static NSUInteger TBStateRequests, TBRejectedRequests;
+NSString *TBBridgeWidgetDiagnostics(void) {
+    char *(*report)(void) = (char *(*)(void))dlsym(RTLD_DEFAULT, "TBWidgetReport");
+    void (*refresh)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "TBRefreshWidgetReport");
+    if (refresh) refresh();
+    NSString *kit = @"WidgetKit shim missing";
+    if (report) { char *c = report(); if (c) { kit = [NSString stringWithUTF8String:c] ?: kit; free(c); } }
+    return [NSString stringWithFormat:@"Widget requests answered: %lu · rejected (bad token): %lu\nToken in app: %@\n%@",
+            (unsigned long)TBStateRequests, (unsigned long)TBRejectedRequests, TBLocalToken() ? @"yes" : @"no", kit];
+}
+
 static NSString *TBLastTrackKey;
 static NSNumber *TBLastPlaying;
 static dispatch_source_t TBVisualizerTimer;
@@ -524,6 +550,7 @@ static void TBStartWidgetRefresh(void) {
     [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil
                                                      queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
         CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        TBRefreshEQCache();
         if (now - lastEQ < 1.5) return;
         lastEQ = now;
         TBRequestWidgetReload(@"com.soum91.timbre.eq");
@@ -591,6 +618,7 @@ static void TBInitializePlaybackBridge(void) {
         TBStateLock = [NSObject new];
         TBStartLocalServer();
         TBStartWidgetRefresh();
+        TBRefreshEQCache();
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                         object:nil queue:NSOperationQueue.mainQueue
                                                     usingBlock:^(__unused NSNotification *note) {
