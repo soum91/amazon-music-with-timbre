@@ -524,15 +524,63 @@ static void TBRequestWidgetReload(NSString *kind) {
     dispatch_async(dispatch_get_main_queue(), ^{ reload(kind.UTF8String); });
 }
 
+// Lock screen: tapping the Now Playing card makes iOS open the app MediaRemote registered as the
+// now-playing client. Report exactly what it registered next to this process's real identity and signed
+// application-identifier, so a mismatch (Amazon's original ID, or a wildcard left by re-signing) is visible.
+static NSString *TBNowPlayingReport = @"Play something, then reopen Diagnostics";
+static NSString *TBSignedAppID(void) {
+    typedef CFTypeRef (*CreateSelf)(CFAllocatorRef);
+    typedef CFTypeRef (*CopyValue)(CFTypeRef, CFStringRef, CFErrorRef *);
+    CreateSelf create = (CreateSelf)dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+    CopyValue copy = (CopyValue)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+    if (!create || !copy) return @"unavailable";
+    CFTypeRef task = create(kCFAllocatorDefault);
+    if (!task) return @"unavailable";
+    CFTypeRef value = copy(task, CFSTR("application-identifier"), NULL);
+    CFRelease(task);
+    NSString *out = value && CFGetTypeID(value) == CFStringGetTypeID() ? [(__bridge NSString *)value copy] : @"missing";
+    if (value) CFRelease(value);
+    return out;
+}
+static void TBRefreshNowPlayingReport(void) {
+    void *mr = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY | RTLD_LOCAL);
+    typedef void (*GetClient)(dispatch_queue_t, void (^)(id));
+    typedef CFStringRef (*ClientString)(id);
+    typedef void (*GetPID)(dispatch_queue_t, void (^)(int));
+    GetClient getClient = mr ? (GetClient)dlsym(mr, "MRMediaRemoteGetNowPlayingClient") : NULL;
+    ClientString bundleOf = mr ? (ClientString)dlsym(mr, "MRNowPlayingClientGetBundleIdentifier") : NULL;
+    ClientString parentOf = mr ? (ClientString)dlsym(mr, "MRNowPlayingClientGetParentAppBundleIdentifier") : NULL;
+    GetPID getPID = mr ? (GetPID)dlsym(mr, "MRMediaRemoteGetNowPlayingApplicationPID") : NULL;
+    NSString *mine = [NSString stringWithFormat:@"This app: %@ · pid %d\nSigned application-identifier: %@",
+                      NSBundle.mainBundle.bundleIdentifier ?: @"?", getpid(), TBSignedAppID()];
+    if (!getClient || !bundleOf) {
+        TBNowPlayingReport = [mine stringByAppendingString:@"\nMediaRemote client lookup unavailable on this iOS"];
+        return;
+    }
+    dispatch_queue_t q = dispatch_get_main_queue();
+    getClient(q, ^(id client) {
+        NSString *bundle = client ? (__bridge NSString *)bundleOf(client) : nil;
+        NSString *parent = client && parentOf ? (__bridge NSString *)parentOf(client) : nil;
+        void (^finish)(int) = ^(int pid) {
+            BOOL ours = [bundle isEqualToString:NSBundle.mainBundle.bundleIdentifier];
+            TBNowPlayingReport = [NSString stringWithFormat:@"%@\nLock screen will open: %@%@ · pid %d\n%@",
+                mine, bundle ?: @"(no now-playing app)", parent.length ? [NSString stringWithFormat:@" (parent %@)", parent] : @"",
+                pid, !bundle ? @"Nothing registered; start playback first." : ours ? @"Matches this app." : @"MISMATCH: iOS will try to open a different app ID."];
+        };
+        if (getPID) getPID(q, finish); else finish(-1);
+    });
+}
+
 // Shown in Timbre > Diagnostics: endpoint traffic plus what WidgetKit reports for this app.
 NSString *TBBridgeWidgetDiagnostics(void) {
     char *(*report)(void) = (char *(*)(void))dlsym(RTLD_DEFAULT, "TBWidgetReport");
     void (*refresh)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "TBRefreshWidgetReport");
     if (refresh) refresh();
+    TBRefreshNowPlayingReport();
     NSString *kit = @"WidgetKit shim missing";
     if (report) { char *c = report(); if (c) { kit = [NSString stringWithUTF8String:c] ?: kit; free(c); } }
-    return [NSString stringWithFormat:@"Widget requests answered: %lu · rejected (bad token): %lu\nToken in app: %@\n%@",
-            (unsigned long)TBStateRequests, (unsigned long)TBRejectedRequests, TBLocalToken() ? @"yes" : @"no", kit];
+    return [NSString stringWithFormat:@"Widget requests answered: %lu · rejected (bad token): %lu\nToken in app: %@\n%@\n\nLOCK SCREEN\n%@",
+            (unsigned long)TBStateRequests, (unsigned long)TBRejectedRequests, TBLocalToken() ? @"yes" : @"no", kit, TBNowPlayingReport];
 }
 
 static NSString *TBLastTrackKey;
@@ -594,6 +642,7 @@ static void TBPublishNowPlaying(NSDictionary *info) {
         TBLastPlaying = state[@"playing"];
         TBRequestWidgetReload(@"com.soum91.timbre.player");
         TBRequestWidgetReload(@"com.soum91.timbre.visualizer");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ TBRefreshNowPlayingReport(); });
     }
 }
 

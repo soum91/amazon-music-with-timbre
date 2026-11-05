@@ -162,11 +162,8 @@ jobs:
           ## Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)
 
           ### Changelog
-          - Player widget no longer falls back to "Nothing playing" when a refresh misses the app: it keeps the last state the app reported and labels it "Last seen".
-          - Widgets schedule their own refresh for the moment the current track ends, so the next song appears even when iOS ignores the app's reload requests.
-          - Widget requests are answered from a cache instead of waiting on Amazon's UI thread, and retried once.
-          - Spectrum now tilts +4.5 dB/octave like a normal analyzer, so mids and treble register instead of reading empty.
-          - Timbre > Diagnostics has a "Widgets" row: requests answered, reloads sent, and which widgets WidgetKit sees for this app.
+          - Diagnostics "Widgets & lock screen" row now shows which app ID iOS registered as the now-playing app (what the lock screen card opens) next to this app's real and signed IDs, to pin down why tapping the lock screen player doesn't open the app.
+          - Includes the widget fixes from 26.37.40.
 
           ### Notes
           Standalone bundle com.soum91.amazonmusictimbre.experimental. Keeps Amazon's amznmp3 and wazeamznmp3 callback schemes, which can compete with the installed stable app. Stable Amazon Music + Timbre and its data are untouched. Timbre 19 audio code is unmodified; its dylib loads an additive player metadata bridge. Unsigned IPA; sign app, widget extension and both dylibs before installing. Published only to the Lab FlareStore feed.

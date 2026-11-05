@@ -654,7 +654,7 @@ static NSString *tbAudioFormatReport(void){
         if(r==6){cell.textLabel.text=@"TimbreEmbeddedBuild21";cell.detailTextLabel.text=[NSString stringWithFormat:@"Library: %s\nSource: %.12s\nInstalled bundle: %@\nDrag started: %llu · finished: %llu",TIMBRE_BUILD_VERSION,TIMBRE_SOURCE_SHA,[NSBundle mainBundle].infoDictionary[@"CFBundleVersion"]?:@"unknown",(unsigned long long)tbDragBegan.load(),(unsigned long long)tbDragEnded.load()];cell.detailTextLabel.numberOfLines=0;}
 
         if(r==5){cell.textLabel.text=@"Home & Profile request diagnostics";cell.detailTextLabel.text=TBPageDiagnosticsText();cell.detailTextLabel.numberOfLines=0;}
-        if(r==11){cell.textLabel.text=@"Widgets";NSString *(*w)(void)=(NSString *(*)(void))dlsym(RTLD_DEFAULT,"TBBridgeWidgetDiagnostics");cell.detailTextLabel.text=w?w():@"Widget bridge not loaded (stable build)";cell.detailTextLabel.numberOfLines=0;}
+        if(r==11){cell.textLabel.text=@"Widgets & lock screen";NSString *(*w)(void)=(NSString *(*)(void))dlsym(RTLD_DEFAULT,"TBBridgeWidgetDiagnostics");cell.detailTextLabel.text=w?w():@"Widget bridge not loaded (stable build)";cell.detailTextLabel.numberOfLines=0;}
         if(r==4){cell.textLabel.text=@"Head tracking";cell.detailTextLabel.text=headStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==3){cell.textLabel.text=@"Login storage diagnostics";cell.detailTextLabel.text=tbKeyStatus();cell.detailTextLabel.numberOfLines=0;}
         if(r==0){cell.textLabel.text=hookedImages.load()?@"Native audio engine detected":@"Waiting for native audio engine";cell.detailTextLabel.text=[NSString stringWithFormat:@"Registrations: %llu · callbacks: %llu",(unsigned long long)registrations.load(),(unsigned long long)callbacks.load()];}
