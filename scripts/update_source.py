@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-def update(ipa, url, destination, repository):
+def update(ipa, url, destination, repository, experimental=False):
     if urlparse(url).scheme != "https":
         raise ValueError("Release asset URL must use HTTPS")
     with zipfile.ZipFile(ipa) as z:
@@ -18,7 +18,9 @@ def update(ipa, url, destination, repository):
             raise ValueError("Expected one main app")
         info = plistlib.loads(z.read(names[0]))
     bundle = info["CFBundleIdentifier"]
-    if bundle != "com.amazon.mp3.AmazonCloudPlayer":
+    expected = ("com.soum91.amazonmusictimbre.experimental" if experimental
+                else "com.amazon.mp3.AmazonCloudPlayer")
+    if bundle != expected:
         raise ValueError("Unexpected app identity")
     build = str(info["CFBundleVersion"])
     marketing_version = str(info["CFBundleShortVersionString"])
@@ -27,7 +29,15 @@ def update(ipa, url, destination, repository):
     feed = json.loads(target.read_text()) if target.exists() else {}
     date = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     has_widget = any('/PlugIns/TimbreWidgets.appex/Info.plist' in n for n in all_entries)
-    if has_widget and info.get('TimbreGUIBuild') == 19:
+    if experimental:
+        description = ("Side-by-side experimental Amazon Timbre Lab. Preserves the original "
+                       "working app and its data; retains Timbre 19 DSP code with an "
+                       "additive playback metadata bridge and player/EQ widgets. "
+                       "Separate Amazon sign-in may be required or rejected. "
+                       "Native Lock Screen media-card launch remains unverified. "
+                       "Unsigned IPA: sign the parent app, widget extension, and "
+                       "both embedded dylibs before installation.")
+    elif has_widget and info.get('TimbreGUIBuild') == 19:
         description = ("Preserves the working Timbre 19 playback and EQ engine. "
                        "Adds Home and Lock Screen widgets with an app-opening link. "
                        "Unsigned IPA: sign both the main app and widget extension before installing. "
@@ -50,9 +60,11 @@ def update(ipa, url, destination, repository):
     versions.sort(key=lambda v: tuple(int(x) for x in v["buildVersion"].split(".")), reverse=True)
     versions = versions[:20]
     latest = versions[0]
-    app = {"name": "Amazon Music with Timbre", "bundleIdentifier": bundle,
+    app_name = "Amazon Timbre Lab" if experimental else "Amazon Music with Timbre"
+    app = {"name": app_name, "bundleIdentifier": bundle,
            "developerName": "Amazon Music; Timbre integration by soum91",
-           "subtitle": "Parametric EQ inside Amazon Music",
+           "subtitle": ("Experimental Home player and Timbre EQ widgets" if experimental
+                        else "Parametric EQ inside Amazon Music"),
            "localizedDescription": description,
            "iconURL": raw + "/assets/icon.png", "tintColor": "#6366F1",
            "category": "music", "versions": versions,
@@ -60,11 +72,17 @@ def update(ipa, url, destination, repository):
            "versionDate": latest["date"],
            "versionDescription": latest["localizedDescription"],
            "downloadURL": latest["downloadURL"], "size": latest["size"]}
-    feed.update({"name": "Amazon Music with Timbre",
-                 "identifier": "com.soum91.amazon-music-with-timbre.source",
-                 "subtitle": "Amazon Music with embedded parametric EQ",
-                 "description": "Non-jailbroken iOS builds. Private GitHub source requires authentication.",
-                 "website": f"https://github.com/{repository}", "sourceURL": raw + "/source.json",
+    feed_name = "Amazon Timbre Lab" if experimental else "Amazon Music with Timbre"
+    feed_filename = "source-lab.json" if experimental else "source.json"
+    feed.update({"name": feed_name,
+                 "identifier": ("com.soum91.amazon-music-with-timbre.lab" if experimental
+                                else "com.soum91.amazon-music-with-timbre.source"),
+                 "subtitle": ("Side-by-side experimental player" if experimental
+                              else "Amazon Music with embedded parametric EQ"),
+                 "description": ("Experimental separate-bundle iOS releases; stable app remains installed."
+                                 if experimental else
+                                 "Non-jailbroken iOS builds. Private GitHub source requires authentication."),
+                 "website": f"https://github.com/{repository}", "sourceURL": raw + "/" + feed_filename,
                  "iconURL": raw + "/assets/icon.png",
                  "tintColor": "#6366F1", "apps": [app], "news": feed.get("news", [])})
     target.write_text(json.dumps(feed, indent=2) + "\n")
@@ -74,5 +92,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("ipa"); p.add_argument("download_url"); p.add_argument("output")
     p.add_argument("--repository", default="soum91/amazon-music-with-timbre")
+    p.add_argument("--experimental", action="store_true")
     a = p.parse_args()
-    update(a.ipa, a.download_url, a.output, a.repository)
+    update(a.ipa, a.download_url, a.output, a.repository, a.experimental)

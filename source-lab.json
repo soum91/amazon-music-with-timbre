@@ -1,0 +1,40 @@
+{
+  "name": "Amazon Timbre Lab",
+  "identifier": "com.soum91.amazon-music-with-timbre.lab",
+  "subtitle": "Side-by-side experimental player",
+  "description": "Experimental standalone build. Your original Amazon Music + Timbre app remains installed and untouched.",
+  "website": "https://github.com/soum91/amazon-music-with-timbre",
+  "sourceURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/source-lab.json",
+  "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
+  "tintColor": "#6366F1",
+  "apps": [
+    {
+      "name": "Amazon Timbre Lab",
+      "bundleIdentifier": "com.soum91.amazonmusictimbre.experimental",
+      "developerName": "Amazon Music; Timbre integration by soum91",
+      "subtitle": "Experimental Home player and Timbre EQ widgets",
+      "localizedDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Separate Amazon sign-in may be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
+      "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
+      "tintColor": "#6366F1",
+      "category": "music",
+      "versions": [
+        {
+          "version": "26.37.29",
+          "buildVersion": "26.37.29",
+          "date": "2026-11-05T02:02:27Z",
+          "localizedDescription": "Separate experimental player/EQ widgets and additive playback bridge. Original Amazon executable and Timbre 19 DSP instructions preserved.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.29/Amazon-Music-Timbre-Lab.ipa",
+          "size": 175378514,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "version": "26.37.29",
+      "buildVersion": "26.37.29",
+      "versionDate": "2026-11-05T02:02:27Z",
+      "versionDescription": "Separate experimental player/EQ widgets and additive playback bridge. Original Amazon executable and Timbre 19 DSP instructions preserved.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.29/Amazon-Music-Timbre-Lab.ipa",
+      "size": 175378514
+    }
+  ],
+  "news": []
+}

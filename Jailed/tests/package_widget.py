@@ -14,6 +14,10 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'package_ipa.py'
 spec = importlib.util.spec_from_file_location('package_ipa', SCRIPT)
 packager = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packager)
+FEED_SCRIPT = Path(__file__).resolve().parents[2] / 'scripts/update_source.py'
+feed_spec = importlib.util.spec_from_file_location('update_source', FEED_SCRIPT)
+feed_writer = importlib.util.module_from_spec(feed_spec)
+feed_spec.loader.exec_module(feed_writer)
 
 
 class WidgetPackagingTests(unittest.TestCase):
@@ -110,6 +114,11 @@ class WidgetPackagingTests(unittest.TestCase):
                                     for t in test_info['CFBundleURLTypes']))
                 self.assertFalse(any('amznmp3' in t['CFBundleURLSchemes']
                                      for t in test_info['CFBundleURLTypes']))
+            lab_feed = feed_writer.update(lab, 'https://github.com/soum91/example/releases/download/lab/example.ipa',
+                                          root / 'source-lab.json', 'soum91/example', experimental=True)
+            self.assertEqual(lab_feed['apps'][0]['bundleIdentifier'],
+                             'com.soum91.amazonmusictimbre.experimental')
+            self.assertTrue(lab_feed['sourceURL'].endswith('/source-lab.json'))
 
             updated = root / 'updated.ipa'
             replacement = bytes.fromhex('cffaedfe') + b'TimbreEmbeddedBuild21 + new code'
