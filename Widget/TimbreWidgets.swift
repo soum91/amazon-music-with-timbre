@@ -187,7 +187,12 @@ private struct Entry: TimelineEntry {
                     EQBand(enabled: true, type: 2, frequency: 8000, gain: 4, q: 0.7)]
         var spectrum = Spectrum()
         spectrum.active = true
-        spectrum.bands = (0..<24).map { i in 0.35 + 0.4 * sin(Double(i) * 0.45) * exp(-Double(i) / 30) + 0.2 * exp(-Double(i) / 4) }
+        spectrum.bands = (0..<24).map { (i: Int) -> Double in
+            let x = Double(i)
+            let wave: Double = 0.4 * sin(x * 0.45) * exp(-x / 30)
+            let bass: Double = 0.2 * exp(-x / 4)
+            return 0.35 + wave + bass
+        }
         return Entry(date: .now,
                      player: Player(["title": "Now Playing", "artist": "Amazon Music", "playing": true,
                                      "controlsReady": true, "duration": 200, "elapsed": 60,
@@ -405,7 +410,7 @@ private struct Curve: View {
                 Path { p in
                     for i in values.indices { i == 0 ? p.move(to: point(i)) : p.addLine(to: point(i)) }
                 }
-                .stroke(eq.enabled ? Theme.accent : .white.opacity(0.35), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .stroke(eq.enabled ? Theme.accent : Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
         }
     }
@@ -489,8 +494,8 @@ private struct PlayerView: View {
                         Label(entry.eq.enabled ? entry.eq.presetLabel : "EQ off", systemImage: "slider.vertical.3")
                             .font(.system(size: 11, weight: .semibold)).lineLimit(1)
                             .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(Capsule().fill(entry.eq.enabled ? Theme.accent.opacity(0.22) : .white.opacity(0.1)))
-                            .foregroundStyle(entry.eq.enabled ? Theme.accent : .white.opacity(0.7))
+                            .background(Capsule().fill(entry.eq.enabled ? Theme.accent.opacity(0.22) : Color.white.opacity(0.1)))
+                            .foregroundStyle(entry.eq.enabled ? Theme.accent : Color.white.opacity(0.7))
                     }
                 }
             }
@@ -525,51 +530,64 @@ private struct VisualizerView: View {
         content.widgetURL(Config.launch).widgetBackground(Color.black)
     }
     @ViewBuilder private var content: some View {
-        if family == .accessoryRectangular {
-            VStack(alignment: .leading, spacing: 2) {
-                Bars(levels: levels, spacing: 2)
-                Text(entry.player?.title ?? "Spectrum").font(.caption2).lineLimit(1)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform").foregroundStyle(Theme.pink)
-                    Text("SPECTRUM").font(.system(size: 10, weight: .bold)).tracking(1.2)
-                    Spacer(minLength: 0)
-                    if entry.spectrum.active {
-                        Text(entry.date, style: .time).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-                    }
-                }
-                ZStack {
-                    Bars(levels: levels, spacing: family == .systemSmall ? 3 : 4)
-                    if !entry.spectrum.active {
-                        Text(entry.live ? "Play something" : "Open Amazon Music")
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
-                    }
-                }
-                if family != .systemSmall, let player = entry.player {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(player.title).font(.system(size: 13, weight: .bold)).lineLimit(1)
-                            Text(player.artist).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
-                        }
-                        Spacer(minLength: 8)
-                        if entry.eq.known {
-                            Text(entry.eq.enabled ? entry.eq.presetLabel : "EQ off")
-                                .font(.system(size: 10, weight: .semibold)).lineLimit(1)
-                                .foregroundStyle(entry.eq.enabled ? Theme.accent : .white.opacity(0.5))
-                        }
-                    }
-                }
-                if family == .systemLarge {
-                    HStack {
-                        ForEach(["60", "250", "1k", "4k", "16k"], id: \.self) { Text($0); if $0 != "16k" { Spacer() } }
-                    }
-                    .font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.4))
-                }
-            }
-            .foregroundStyle(.white)
+        if family == .accessoryRectangular { lockView } else { homeView }
+    }
+    private var lockView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Bars(levels: levels, spacing: 2)
+            Text(entry.player?.title ?? "Spectrum").font(.caption2).lineLimit(1)
         }
+    }
+    private var homeView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            bars
+            if family != .systemSmall { trackLine }
+            if family == .systemLarge { axis }
+        }
+        .foregroundStyle(.white)
+    }
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "waveform").foregroundStyle(Theme.pink)
+            Text("SPECTRUM").font(.system(size: 10, weight: .bold)).tracking(1.2)
+            Spacer(minLength: 0)
+            if entry.spectrum.active {
+                Text(entry.date, style: .time).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+            }
+        }
+    }
+    private var bars: some View {
+        ZStack {
+            Bars(levels: levels, spacing: family == .systemSmall ? 3 : 4)
+            if !entry.spectrum.active {
+                Text(entry.live ? "Play something" : "Open Amazon Music")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+    @ViewBuilder private var trackLine: some View {
+        if let player = entry.player {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(player.title).font(.system(size: 13, weight: .bold)).lineLimit(1)
+                    Text(player.artist).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if entry.eq.known { eqTag }
+            }
+        }
+    }
+    private var eqTag: some View {
+        Text(entry.eq.enabled ? entry.eq.presetLabel : "EQ off")
+            .font(.system(size: 10, weight: .semibold)).lineLimit(1)
+            .foregroundStyle(entry.eq.enabled ? Theme.accent : Color.white.opacity(0.5))
+    }
+    private var axis: some View {
+        HStack {
+            Text("60"); Spacer(); Text("250"); Spacer(); Text("1k"); Spacer(); Text("4k"); Spacer(); Text("16k")
+        }
+        .font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.4))
     }
 }
 
@@ -608,8 +626,8 @@ private struct EQView: View {
             CommandButton(command: "eq/toggle", fallback: Config.launch) {
                 Text(eq.enabled ? "ON" : "OFF").font(.system(size: 11, weight: .heavy))
                     .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(Capsule().fill(eq.enabled ? Theme.accent : .white.opacity(0.14)))
-                    .foregroundStyle(eq.enabled ? .black : .white.opacity(0.75))
+                    .background(Capsule().fill(eq.enabled ? Theme.accent : Color.white.opacity(0.14)))
+                    .foregroundStyle(eq.enabled ? Color.black : Color.white.opacity(0.75))
             }
         }
     }
