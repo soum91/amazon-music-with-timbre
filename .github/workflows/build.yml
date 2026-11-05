@@ -162,8 +162,9 @@ jobs:
           ## Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)
 
           ### Changelog
-          - Diagnostics "Widgets & lock screen" row now shows which app ID iOS registered as the now-playing app (what the lock screen card opens) next to this app's real and signed IDs, to pin down why tapping the lock screen player doesn't open the app.
-          - Includes the widget fixes from 26.37.40.
+          - Fix launch getting stuck on the Amazon Music splash and slow Home feed in 26.37.38 to 26.37.41: removed the Oct 30 "GUI 20" change that let Amazon's Branch redirect links (am.app.link) load inside the sign-in web view. It was a guess at the old Home block, which turned out to be the bundle ID; with that fixed it only got in the way. Sign-in navigation is back to exactly Timbre 19's behaviour.
+          - Widget code no longer does any work during launch: EQ state for widgets refreshes lazily, only after real EQ changes, and the lock screen diagnostic runs only when Diagnostics is opened.
+          - Keeps head tracking, widgets, presets and diagnostics from 26.37.38 to 26.37.41.
 
           ### Notes
           Standalone bundle com.soum91.amazonmusictimbre.experimental. Keeps Amazon's amznmp3 and wazeamznmp3 callback schemes, which can compete with the installed stable app. Stable Amazon Music + Timbre and its data are untouched. Timbre 19 audio code is unmodified; its dylib loads an additive player metadata bridge. Unsigned IPA; sign app, widget extension and both dylibs before installing. Published only to the Lab FlareStore feed.

@@ -797,6 +797,7 @@ extern "C" void TBEmbeddedApplyConfig(NSDictionary *config) {
     os_unfair_lock_lock(&fxLock);embeddedFX=fx;os_unfair_lock_unlock(&fxLock);fullConfigActive=true;
     settings.generation.fetch_add(1,std::memory_order_release);
     TBPublishWidgetStatus(d);
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TimbreWidgetEQChanged" object:nil];
     dispatch_async(dispatch_get_main_queue(),^{updateHeadTracking();});
 }
 // 24 log-spaced bands, 30 Hz..16 kHz, smoothed over ~2 s so a widget snapshot shows the track's character.

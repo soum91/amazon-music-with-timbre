@@ -312,8 +312,8 @@ static void TBRefreshEQCache(void) {
 static NSDictionary *TBEQState(void) {
     NSDictionary *eq;
     @synchronized(TBStateLock) { eq = TBCachedEQ; }
-    if (!eq) { TBRefreshEQCache(); return @{}; }
-    return eq;
+    TBRefreshEQCache();  // asynchronous; the next request sees the fresh copy
+    return eq ?: @{};
 }
 
 static NSDictionary *TBSpectrumState(void) {
@@ -595,13 +595,10 @@ static void TBStartWidgetRefresh(void) {
         if (TBLastPlaying.boolValue) TBRequestWidgetReload(@"com.soum91.timbre.visualizer");
     });
     dispatch_resume(TBVisualizerTimer);
-    __block CFAbsoluteTime lastEQ = 0;
-    [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil
+    // EQ edits: TBEmbeddedApplyConfig posts this after each committed change (not on every defaults write).
+    [NSNotificationCenter.defaultCenter addObserverForName:@"TimbreWidgetEQChanged" object:nil
                                                      queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
         TBRefreshEQCache();
-        if (now - lastEQ < 1.5) return;
-        lastEQ = now;
         TBRequestWidgetReload(@"com.soum91.timbre.eq");
     }];
 }
@@ -642,7 +639,6 @@ static void TBPublishNowPlaying(NSDictionary *info) {
         TBLastPlaying = state[@"playing"];
         TBRequestWidgetReload(@"com.soum91.timbre.player");
         TBRequestWidgetReload(@"com.soum91.timbre.visualizer");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ TBRefreshNowPlayingReport(); });
     }
 }
 
@@ -668,7 +664,6 @@ static void TBInitializePlaybackBridge(void) {
         TBStateLock = [NSObject new];
         TBStartLocalServer();
         TBStartWidgetRefresh();
-        TBRefreshEQCache();
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                         object:nil queue:NSOperationQueue.mainQueue
                                                     usingBlock:^(__unused NSNotification *note) {
