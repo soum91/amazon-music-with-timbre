@@ -3,9 +3,14 @@ import WidgetKit
 
 private enum Config {
     static let group = "group.com.soum91.amazon.timbre"
-    static let launch = URL(string: "timbre-amazon://open")!
+    #if TIMBRE_EXPERIMENTAL
+    static let scheme = "timbre-amazon-lab"
+    #else
+    static let scheme = "timbre-amazon"
+    #endif
+    static let launch = URL(string: "\(scheme)://open")!
     static func playerLink(_ action: String) -> URL {
-        URL(string: "timbre-amazon://player/\(action)")!
+        URL(string: "\(scheme)://player/\(action)")!
     }
 }
 
@@ -56,16 +61,38 @@ private struct Entry: TimelineEntry {
              player: Player(["title": "Now Playing", "artist": "Amazon Music", "playing": true]),
              hasEQ: true, enabled: true, bands: 19, effects: 2)
     }
+    static func fetchLive(_ completion: @escaping (Self) -> Void) {
+        // Loopback provides a fallback when the paid signing profile does not
+        // grant App Groups to both the app and WidgetKit extension.
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:43819/player")!)
+        request.timeoutInterval = 1.5
+        URLSession.shared.dataTask(with: request) { bytes, _, error in
+            let cached = Self.current()
+            guard error == nil,
+                  let bytes,
+                  let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+                  let live = Player(json) else {
+                completion(cached)
+                return
+            }
+            completion(Self(date: .now, player: live,
+                            hasEQ: cached.hasEQ, enabled: cached.enabled,
+                            bands: cached.bands, effects: cached.effects))
+        }.resume()
+    }
 }
 
 private struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> Entry { .preview }
     func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) {
-        completion(context.isPreview ? .preview : .current())
+        if context.isPreview { completion(.preview) }
+        else { Entry.fetchLive(completion) }
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
         // WidgetKit ultimately controls the refresh frequency.
-        completion(Timeline(entries: [.current()], policy: .after(.now.addingTimeInterval(300))))
+        Entry.fetchLive { entry in
+            completion(Timeline(entries: [entry], policy: .after(.now.addingTimeInterval(300))))
+        }
     }
 }
 

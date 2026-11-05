@@ -72,6 +72,14 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' build/TimbreWidgets.appex/Info.plist | grep -Fx 'com.apple.widgetkit-extension'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' build/TimbreWidgets.appex/Info.plist | grep -Fx 'iPhoneOS'
           file build/TimbreWidgets.appex/TimbreWidgets
+      - name: Build side-by-side experimental player bridge and widget
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -O2 -dynamiclib Jailed/TimbrePlaybackBridge.m -framework Foundation -framework UIKit -framework MediaPlayer -install_name @rpath/TimbrePlaybackBridge.dylib -o build/TimbrePlaybackBridge.dylib
+          file build/TimbrePlaybackBridge.dylib
+          xcodebuild -quiet -project Widget/TimbreWidgets.xcodeproj -target TimbreWidgets -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CONFIGURATION_BUILD_DIR="$PWD/build/widget-lab-products" SWIFT_ACTIVE_COMPILATION_CONDITIONS=TIMBRE_EXPERIMENTAL CODE_SIGNING_ALLOWED=NO build
+          test -f build/widget-lab-products/TimbreWidgets.appex/TimbreWidgets
+          cp -R build/widget-lab-products/TimbreWidgets.appex build/TimbreWidgets-Lab.appex
       - name: Upload widget extension for signing diagnostics
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +94,7 @@ jobs:
           mkdir -p input
           gh release download source-ipa --repo "$GITHUB_REPOSITORY" --pattern Amazon-Music-source.ipa --dir input
       - name: Fetch verified working Timbre 19 IPA for requested release
-        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]') }}
+        if: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[release-working19]') || contains(github.event.head_commit.message, '[release-player-lab]')) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,6 +115,37 @@ jobs:
           name: Amazon-Music-Timbre-unsigned
           path: build/Amazon-Music-Timbre.ipa
           if-no-files-found: error
+      - name: Package side-by-side experimental IPA (preserve Build 19 DSP)
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-player-lab]') }}
+        run: |
+          python3 Jailed/package_ipa.py input/Amazon-Music-Timbre-Audio-Formats-19.ipa build/TimbreNative-FlareStore.dylib build/Amazon-Music-Timbre-Lab.ipa --widget build/TimbreWidgets-Lab.appex --keep-working-library --experimental-playback-bridge build/TimbrePlaybackBridge.dylib
+          python3 - <<'PY'
+          import plistlib, zipfile
+          original='input/Amazon-Music-Timbre-Audio-Formats-19.ipa'
+          candidate='build/Amazon-Music-Timbre-Lab.ipa'
+          prefix='Payload/AmazonCloudPlayer.app/'
+          with zipfile.ZipFile(original) as old, zipfile.ZipFile(candidate) as new:
+              assert old.read(prefix+'AmazonCloudPlayer') == new.read(prefix+'AmazonCloudPlayer')
+              info=plistlib.loads(new.read(prefix+'Info.plist'))
+              widget=plistlib.loads(new.read(prefix+'PlugIns/TimbreWidgets.appex/Info.plist'))
+              assert info['CFBundleIdentifier']=='com.soum91.amazonmusictimbre.experimental'
+              assert widget['CFBundleIdentifier']==info['CFBundleIdentifier']+'.TimbreWidgets'
+              assert b'@loader_path/TimbrePlaybackBridge.dylib' in new.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[:16384]
+              assert old.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[16384:] == new.read(prefix+'Frameworks/TimbreNative-FlareStore.dylib')[16384:]
+          PY
+      - name: Upload experimental IPA artifact
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-player-lab]') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amazon-Music-Timbre-Lab-unsigned
+          path: build/Amazon-Music-Timbre-Lab.ipa
+          if-no-files-found: error
+      - name: Publish separate experimental prerelease (never update normal JSON feed)
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-player-lab]') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "lab-$TIMBRE_BUILD_VERSION" build/Amazon-Music-Timbre-Lab.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Amazon Timbre Lab $TIMBRE_BUILD_VERSION (side-by-side experimental)" --notes "Experimental standalone bundle com.soum91.amazonmusictimbre.experimental. Original Amazon Music + Timbre remains installed and its app container is unchanged. Timbre 19 audio code is unmodified; its dylib loader header loads an additive player metadata bridge. May require a separate Amazon login or fail server authorization due to bundle ID change. Native Lock Screen media card launch behavior is not confirmed. Unsigned IPA; sign app, widget extension and both dylibs before installation. Not added to stable FlareStore feed." --prerelease --latest=false
       - name: Publish IPA release and update sideloader feed
         if: ${{ inputs.package_ipa == true || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-working19]')) }}
         env:

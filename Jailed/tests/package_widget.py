@@ -29,7 +29,14 @@ class WidgetPackagingTests(unittest.TestCase):
             executable = bytearray(4096)
             executable[:4] = bytes.fromhex('cffaedfe')
             struct.pack_into('<II', executable, 16, 0, 0)
-            library.write_bytes(bytes.fromhex('cffaedfe') + b'TimbreEmbeddedBuild21')
+            native = bytearray(4096)
+            native[:4] = bytes.fromhex('cffaedfe')
+            struct.pack_into('<II', native, 16, 1, 152)
+            struct.pack_into('<II', native, 32, 0x19, 152)
+            struct.pack_into('<I', native, 32 + 64, 1)
+            struct.pack_into('<I', native, 32 + 72 + 48, 1024)
+            native[1024:1024+len(b'TimbreEmbeddedBuild21')] = b'TimbreEmbeddedBuild21'
+            library.write_bytes(native)
             info = {'CFBundleIdentifier': 'com.amazon.mp3.AmazonCloudPlayer',
                     'CFBundleExecutable': 'AmazonMusic',
                     'CFBundleVersion': '123',
@@ -75,6 +82,32 @@ class WidgetPackagingTests(unittest.TestCase):
                 self.assertEqual(first.read(app + 'Frameworks/TimbreNative-FlareStore.dylib'),
                                  second.read(app + 'Frameworks/TimbreNative-FlareStore.dylib'))
                 self.assertEqual(second.namelist().count(app + 'Frameworks/TimbreNative-FlareStore.dylib'), 1)
+
+            # Experimental media widget is a different installed app. The
+            # original executable and DSP section bytes remain identical.
+            bridge_file = root / 'TimbrePlaybackBridge.dylib'
+            bridge_file.write_bytes(bytes.fromhex('cffaedfe') + bytes(64))
+            lab = root / 'lab.ipa'
+            packager.package(output, library, lab, widget,
+                             keep_working_library=True,
+                             experimental_bridge=bridge_file)
+            with zipfile.ZipFile(output) as stable, zipfile.ZipFile(lab) as test:
+                stable_library = stable.read(app + 'Frameworks/TimbreNative-FlareStore.dylib')
+                test_library = test.read(app + 'Frameworks/TimbreNative-FlareStore.dylib')
+                self.assertEqual(stable.read(app + 'AmazonMusic'), test.read(app + 'AmazonMusic'))
+                self.assertEqual(stable_library[1024:], test_library[1024:])
+                self.assertIn(b'@loader_path/TimbrePlaybackBridge.dylib', test_library[:1024])
+                self.assertEqual(test.read(app + 'Frameworks/TimbrePlaybackBridge.dylib'),
+                                 bridge_file.read_bytes())
+                test_info = plistlib.loads(test.read(app + 'Info.plist'))
+                ext_info = plistlib.loads(test.read(app + 'PlugIns/TimbreWidgets.appex/Info.plist'))
+                self.assertEqual(test_info['CFBundleIdentifier'],
+                                 'com.soum91.amazonmusictimbre.experimental')
+                self.assertEqual(ext_info['CFBundleIdentifier'],
+                                 test_info['CFBundleIdentifier'] + '.TimbreWidgets')
+                self.assertEqual(test_info['CFBundleDisplayName'], 'Amazon Timbre Lab')
+                self.assertTrue(any('timbre-amazon-lab' in t['CFBundleURLSchemes']
+                                    for t in test_info['CFBundleURLTypes']))
 
             updated = root / 'updated.ipa'
             replacement = bytes.fromhex('cffaedfe') + b'TimbreEmbeddedBuild21 + new code'

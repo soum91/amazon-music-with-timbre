@@ -66,8 +66,49 @@ def has_timbre_load_command(data):
     return any(cmd == 0xC and name in data[offset:offset + size]
                for cmd, offset, size in commands(data))
 
+def attach_playback_bridge(existing_library):
+    """Load an additive bridge while preserving every existing code/data section byte.
 
-def package(source, library, output, widget=None, keep_working_library=False):
+    This changes only Mach-O load commands in the pre-existing header padding.
+    The previously installed Build 19 DSP machine code is unchanged.
+    """
+    data = bytearray(existing_library)
+    rows = list(commands(data))
+    name = b'@loader_path/TimbrePlaybackBridge.dylib\0'
+    if any(c == 0xC and name in data[o:o+s] for c, o, s in rows):
+        raise ValueError('Playback bridge is already attached')
+    first_section = len(data)
+    for c, offset, size in rows:
+        if c != 0x19:
+            continue
+        count = struct.unpack_from('<I', data, offset + 64)[0]
+        for i in range(count):
+            section = offset + 72 + i * 80
+            pos = struct.unpack_from('<I', data, section + 48)[0]
+            if pos:
+                first_section = min(first_section, pos)
+    old_end = 32 + struct.unpack_from('<I', data, 20)[0]
+    # Drop the old code-signature command. The external signer must sign the
+    # modified library and the new bridge together before installation.
+    kept = [bytes(data[o:o+s]) for c, o, s in rows if c != 0x1D]
+    size = (24 + len(name) + 7) & ~7
+    added = struct.pack('<IIIIII', 0xC, size, 24, 0, 0, 0) + name
+    added += b'\0' * (size - len(added))
+    payload = b''.join(kept) + added
+    if 32 + len(payload) > first_section:
+        raise ValueError('Insufficient Mach-O header space for playback bridge')
+    if any(data[old_end:32 + len(payload)]):
+        raise ValueError('Playback bridge would overwrite nonzero header padding')
+    unchanged_payload = bytes(data[first_section:])
+    data[32:max(old_end, 32+len(payload))] = payload + b'\0' * max(0, old_end-32-len(payload))
+    struct.pack_into('<II', data, 16, len(kept)+1, len(payload))
+    if data[first_section:] != unchanged_payload:
+        raise AssertionError('Existing DSP code/data changed')
+    return bytes(data)
+
+
+def package(source, library, output, widget=None, keep_working_library=False,
+            experimental_bridge=None):
     raw = Path(source).read_bytes()
     if raw[:2] == b'\x1f\x8b':
         raw = gzip.decompress(raw)
@@ -76,6 +117,12 @@ def package(source, library, output, widget=None, keep_working_library=False):
         raise ValueError('Invalid Timbre library')
     if b'TimbreEmbeddedBuild21' not in lib:
         raise ValueError('Expected GUI 21 library marker; refusing a stale compiled library')
+    if experimental_bridge and not keep_working_library:
+        raise ValueError('Experimental side-by-side build must retain the working Timbre 19 library')
+    bridge = Path(experimental_bridge).read_bytes() if experimental_bridge else None
+    if bridge is not None and bridge[:4] != b'\xcf\xfa\xed\xfe':
+        raise ValueError('Invalid arm64 playback bridge')
+    experimental_id = 'com.soum91.amazonmusictimbre.experimental'
     widget_dir = Path(widget) if widget else None
     widget_info = None
     if widget_dir:
@@ -119,9 +166,16 @@ def package(source, library, output, widget=None, keep_working_library=False):
         # repackaging a working Timbre 19 IPA. Never inject a second load command.
         modified = original_executable if already_injected else inject(original_executable)
         selected_library = original.read(installed) if keep_working_library else lib
+        original_library = selected_library
+        if bridge is not None:
+            selected_library = attach_playback_bridge(original_library)
         # Preserve Amazon identity; login uses this bundle ID. Signing is external.
-        plist['CFBundleDisplayName'] = 'Amazon Music Timbre'
-        plist['CFBundleName'] = 'Amazon Music Timbre'
+        plist['CFBundleDisplayName'] = 'Amazon Timbre Lab' if bridge else 'Amazon Music Timbre'
+        plist['CFBundleName'] = 'Amazon Timbre Lab' if bridge else 'Amazon Music Timbre'
+        if bridge:
+            # A genuinely distinct app container, allowing the working copy
+            # to remain installed and its login/database to remain untouched.
+            plist['CFBundleIdentifier'] = experimental_id
         # The user-facing version must advance on every release. A four-part
         # build ID alone is collapsed to the same three-part display version
         # by sideloaders such as FlareStore, making updates look identical.
@@ -141,10 +195,11 @@ def package(source, library, output, widget=None, keep_working_library=False):
         url_types = plist.get('CFBundleURLTypes', [])
         if not isinstance(url_types, list):
             url_types = []
-        if not any('timbre-amazon' in item.get('CFBundleURLSchemes', [])
+        scheme = 'timbre-amazon-lab' if bridge else 'timbre-amazon'
+        if not any(scheme in item.get('CFBundleURLSchemes', [])
                    for item in url_types if isinstance(item, dict)):
             url_types.append({'CFBundleURLName': 'com.soum91.timbre.widget',
-                              'CFBundleURLSchemes': ['timbre-amazon']})
+                              'CFBundleURLSchemes': [scheme]})
         plist['CFBundleURLTypes'] = url_types
         # App Store thinning can leave a device whitelist from the source phone.
         # Keep architectural/minimum OS requirements, but remove that whitelist.
@@ -169,9 +224,17 @@ def package(source, library, output, widget=None, keep_working_library=False):
             item.create_system = 3
             item.external_attr = 0o100755 << 16
             out.writestr(item, selected_library, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            if bridge is not None:
+                entry = zipfile.ZipInfo(root + 'Frameworks/TimbrePlaybackBridge.dylib')
+                entry.create_system = 3
+                entry.external_attr = 0o100755 << 16
+                out.writestr(entry, bridge, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
             if widget_dir:
                 widget_info['CFBundleVersion'] = plist['CFBundleVersion']
                 widget_info['CFBundleShortVersionString'] = plist.get('CFBundleShortVersionString', '1.0')
+                if bridge:
+                    widget_info['CFBundleIdentifier'] = experimental_id + '.TimbreWidgets'
+                    widget_info['CFBundleDisplayName'] = 'Amazon Timbre Lab'
                 widget_root = root + 'PlugIns/TimbreWidgets.appex/'
                 for path in sorted(widget_dir.rglob('*')):
                     if not path.is_file():
@@ -195,6 +258,11 @@ def package(source, library, output, widget=None, keep_working_library=False):
         assert has_timbre_load_command(packaged_executable)
         if already_injected:
             assert packaged_executable == original_executable
+        if bridge is not None:
+            assert out.read(root + 'Frameworks/TimbrePlaybackBridge.dylib') == bridge
+            assert has_timbre_load_command(packaged_executable)
+            assert b'@loader_path/TimbrePlaybackBridge.dylib' in selected_library[:16384]
+            assert original_library[16384:] == selected_library[16384:]
         extension = root + 'PlugIns/TimbreWidgets.appex/'
         if widget_dir:
             assert extension + widget_info['CFBundleExecutable'] in out.namelist()
@@ -204,7 +272,7 @@ def package(source, library, output, widget=None, keep_working_library=False):
             assert not any('.appex/' in n for n in out.namelist())
         assert not any('/com.apple.WatchPlaceholder/' in n for n in out.namelist())
         verified = plistlib.loads(out.read(info))
-        assert verified['CFBundleIdentifier'] == 'com.amazon.mp3.AmazonCloudPlayer'
+        assert verified['CFBundleIdentifier'] == (experimental_id if bridge else 'com.amazon.mp3.AmazonCloudPlayer')
         assert verified['CFBundleVersion'] == plist['CFBundleVersion']
         assert 'UISupportedDevices' not in verified
     return {'output': str(Path(output).resolve()), 'bytes': Path(output).stat().st_size, 'build': plist['CFBundleVersion'], 'bundle_id': plist['CFBundleIdentifier'], 'signing_required': True}
@@ -217,8 +285,10 @@ if __name__ == '__main__':
     p.add_argument('--widget', help='Compiled TimbreWidgets.appex directory to embed')
     p.add_argument('--keep-working-library', action='store_true',
                    help='Keep the existing Timbre dylib from a previously injected IPA')
+    p.add_argument('--experimental-playback-bridge',
+                   help='Separate experimental copy: loader bridge, distinct bundle ID and app data')
     args = p.parse_args()
     print(json.dumps(package(args.source, args.library, args.output, args.widget,
-                             args.keep_working_library)))
+                             args.keep_working_library, args.experimental_playback_bridge)))
 
 

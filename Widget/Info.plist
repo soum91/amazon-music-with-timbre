@@ -12,6 +12,8 @@
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>MinimumOSVersion</key><string>16.0</string>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
     <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
     <key>NSExtension</key>
     <dict>
