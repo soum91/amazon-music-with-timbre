@@ -522,7 +522,14 @@ private struct VisualizerView: View {
         switch family {
         case .systemSmall, .accessoryRectangular:
             // 12 bars: average neighbouring bands.
-            return stride(from: 0, to: raw.count, by: 2).map { i in (raw[i] + raw[min(i + 1, raw.count - 1)]) / 2 }
+            var pairs: [Double] = []
+            var i = 0
+            while i < raw.count {
+                let next: Double = raw[min(i + 1, raw.count - 1)]
+                pairs.append((raw[i] + next) / 2)
+                i += 2
+            }
+            return pairs
         default: return raw
         }
     }
