@@ -13,11 +13,20 @@
       "bundleIdentifier": "com.soum91.amazonmusictimbre.experimental",
       "developerName": "Amazon Music; Timbre integration by soum91",
       "subtitle": "Experimental Home player and Timbre EQ widgets",
-      "localizedDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Separate Amazon sign-in may be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
+      "localizedDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Restores Amazon's native login/deep-link URL schemes in the Lab build. Both installed apps now claim Amazon callback schemes, so iOS may direct those links to either app. Separate sign-in may still be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
       "iconURL": "https://raw.githubusercontent.com/soum91/amazon-music-with-timbre/main/assets/icon.png",
       "tintColor": "#6366F1",
       "category": "music",
       "versions": [
+        {
+          "version": "26.37.33",
+          "buildVersion": "26.37.33",
+          "date": "2026-11-05T04:02:08Z",
+          "localizedDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Restores Amazon's native login/deep-link URL schemes in the Lab build. Both installed apps now claim Amazon callback schemes, so iOS may direct those links to either app. Separate sign-in may still be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
+          "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.33/Amazon-Music-Timbre-Lab.ipa",
+          "size": 175381093,
+          "minOSVersion": "16.0"
+        },
         {
           "version": "26.37.32",
           "buildVersion": "26.37.32",
@@ -37,12 +46,12 @@
           "minOSVersion": "16.0"
         }
       ],
-      "version": "26.37.32",
-      "buildVersion": "26.37.32",
-      "versionDate": "2026-11-05T03:00:10Z",
-      "versionDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Separate Amazon sign-in may be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
-      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.32/Amazon-Music-Timbre-Lab.ipa",
-      "size": 175381070
+      "version": "26.37.33",
+      "buildVersion": "26.37.33",
+      "versionDate": "2026-11-05T04:02:08Z",
+      "versionDescription": "Side-by-side experimental Amazon Timbre Lab. Preserves the original working app and its data; retains Timbre 19 DSP code with an additive playback metadata bridge and player/EQ widgets. Restores Amazon's native login/deep-link URL schemes in the Lab build. Both installed apps now claim Amazon callback schemes, so iOS may direct those links to either app. Separate sign-in may still be required or rejected. Native Lock Screen media-card launch remains unverified. Unsigned IPA: sign the parent app, widget extension, and both embedded dylibs before installation.",
+      "downloadURL": "https://github.com/soum91/amazon-music-with-timbre/releases/download/lab-26.37.33/Amazon-Music-Timbre-Lab.ipa",
+      "size": 175381093
     }
   ],
   "news": []
