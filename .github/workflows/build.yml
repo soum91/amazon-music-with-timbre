@@ -21,6 +21,15 @@ jobs:
       TIMBRE_BUILD_VERSION: 26.37.2
     steps:
       - uses: actions/checkout@v4
+      - name: Verify installed version UI contract
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 "$GITHUB_WORKSPACE/scripts/check_version_ui.py"
+          else
+            python "$GITHUB_WORKSPACE/scripts/check_version_ui.py"
+          fi
+
       - name: Assign visible three-part version
         run: |
           # The release counter is the third component, so FlareStore displays

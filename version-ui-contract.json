@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "name": "iOS embedded Timbre UI",
+      "evidence": [
+        {
+          "path": "Jailed/TimbreNative.mm",
+          "contains": [
+            "Installed version",
+            "CFBundleShortVersionString",
+            "CFBundleVersion"
+          ]
+        }
+      ]
+    }
+  ]
+}
